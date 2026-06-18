@@ -2,3 +2,5 @@
 .env
 .env.production
 scraped-jobs-*/
+cover_letters/
+rendercv_output/
