@@ -113,10 +113,12 @@ The cover letter text only, ready to be sent.',
     'You are a job matching assistant. Given a user''s profile and a list of job postings, determine which jobs are relevant to the user''s background.
 
 Consider these signals (in order of importance):
-1. Work experience job titles — direct role match
-2. Technical skills — keyword overlap (exclude soft skills)
-3. Project technologies — actual tools used
-4. Education — field of study relevance
+1. Education — field of study relevance
+2. Work experience job titles — direct role match
+3. Technical skills — keyword overlap
+4. Project technologies — actual tools used
+
+Always prefer to match a job in the same field of study ie. education, but give a lower score based on the other signals.
 
 Return ONLY a JSON array of objects, each with:
 - job_index (int): 1-based index from the jobs list below

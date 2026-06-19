@@ -1,4 +1,5 @@
 import logging
+import uuid
 from datetime import datetime
 
 from sqlalchemy import (
@@ -446,6 +447,79 @@ def bulk_insert_job_matches(matches: list[dict]):
     except Exception:
         session.rollback()
         raise
+    finally:
+        session.close()
+
+
+def update_job_match_status(job_id: int, user_id: str, status: str) -> bool:
+    """Update the status of a JobMatch row (e.g. 'matched' → 'applied')."""
+    session = get_session()
+    try:
+        row = session.query(JobMatch).filter(
+            JobMatch.job_id == job_id,
+            JobMatch.user_id == user_id,
+        ).first()
+        if row:
+            row.status = status
+            session.commit()
+            return True
+        logger.warning("No JobMatch found for job %s / user %s", job_id, user_id)
+        return False
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def get_application_documents(resume_id: str, job_id: int) -> dict:
+    """
+    Collect all available document paths for a resume + job combo.
+
+    Returns dict with keys: 'resume_pdf', 'resume_docx', 'cover_letter_docx',
+    'education_docs' (list), 'certification_docs' (list).
+    """
+    session = get_session()
+    try:
+        rid = uuid.UUID(resume_id) if isinstance(resume_id, str) else resume_id
+
+        # Generated documents for this resume + job
+        gen = session.query(GeneratedDocument).filter(
+            GeneratedDocument.resume_id == rid,
+            GeneratedDocument.job_id == job_id,
+        ).all()
+
+        result = {
+            "resume_pdf": None,
+            "resume_docx": None,
+            "cover_letter_docx": None,
+            "education_docs": [],
+            "certification_docs": [],
+        }
+
+        for doc in gen:
+            if doc.document_type == "resume":
+                if doc.pdf_path and not result["resume_pdf"]:
+                    result["resume_pdf"] = doc.pdf_path
+            elif doc.document_type == "cover_letter":
+                if doc.docx_path and not result["cover_letter_docx"]:
+                    result["cover_letter_docx"] = doc.docx_path
+
+        # Static document paths from education + certifications tables
+        edu_rows = session.query(Education).filter(Education.resume_id == rid).all()
+        for e in edu_rows:
+            if e.document_path:
+                result["education_docs"].append(e.document_path)
+
+        cert_rows = session.query(Certification).filter(Certification.resume_id == rid).all()
+        for c in cert_rows:
+            if c.document_path:
+                result["certification_docs"].append(c.document_path)
+
+        return result
+    except Exception:
+        logger.warning("Error collecting application documents for resume %s / job %s", resume_id, job_id, exc_info=True)
+        return {}
     finally:
         session.close()
 

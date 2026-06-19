@@ -9,9 +9,11 @@ import pandas as pd
 import time
 import random
 import re
-from urllib.parse import urljoin, urlparse
-from datetime import datetime, timedelta
+from urllib.parse import urljoin
+from datetime import datetime
 import logging
+
+from scrapers.utils import decode_cfemail, render_links
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -252,6 +254,32 @@ class IHarareJobsScraper:
                             relevant_description_parts.append("\n".join(section_content_parts))
             
             data['description'] = "\n\n".join(relevant_description_parts) if relevant_description_parts else None
+
+            # ── Extract "How to Apply" section ───────────────────────
+            for widget in content_widgets:
+                h3 = widget.find('h3')
+                if h3 and "how to apply" in h3.get_text(strip=True).lower():
+                    apply_parts = []
+                    for child in widget.children:
+                        cname = getattr(child, 'name', None)
+                        if cname == 'p':
+                            # Decode Cloudflare emails before link rendering
+                            for el in child.find_all(lambda tag: tag.get('data-cfemail')):
+                                real = decode_cfemail(el.get('data-cfemail', ''))
+                                if real:
+                                    el.replace_with(f' {real} ')
+                            # Render <a> tags as "text (url)" before text extraction
+                            txt = render_links(child)
+                            if txt:
+                                apply_parts.append(txt)
+                        elif cname in ('ul', 'ol'):
+                            for li in child.find_all('li'):
+                                t = li.get_text(strip=True)
+                                if t:
+                                    apply_parts.append(t)
+                    if apply_parts:
+                        data['apply_instructions'] = '\n'.join(filter(None, apply_parts))
+                    break
             
             # Get category from header
             header = soup.find('section', class_='single-candidate-page')
@@ -319,7 +347,8 @@ class IHarareJobsScraper:
             'date_posted': job_data.get('date_posted_detailed') or job_data.get('date_posted') or None,
             'expires': job_data.get('expiry_detailed') or job_data.get('expires') or None,
             'category': job_data.get('category') or None,
-            'remote': None # Assuming no explicit remote status for now
+            'remote': None, # Assuming no explicit remote status for now
+            'apply_instructions': job_data.get('apply_instructions') or None
         }
         return standardized
 

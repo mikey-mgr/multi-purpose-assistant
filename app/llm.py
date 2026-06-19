@@ -126,6 +126,66 @@ def generate_text(
     }
 
 
+def generate_text_direct(
+    system_prompt: str,
+    user_prompt: str,
+    model: str | None = None,
+    provider: str | None = None,
+) -> dict[str, Any]:
+    """
+    Call the LLM with raw prompts (no database template lookup).
+
+    Parameters
+    ----------
+    system_prompt : str
+        System-level instructions.
+    user_prompt : str
+        User message content.
+    model : str | None
+        Overrides ``settings.LLM_MODEL``.
+    provider : str | None
+        ``"openrouter"`` or ``"gemini"``.  Falls back to ``settings.LLM_PROVIDER``.
+
+    Returns
+    -------
+    dict with ``content``, ``model``, ``tokens_used``.
+    """
+    resolved_provider = provider or settings.LLM_PROVIDER
+    client = _get_client(provider)
+    if not client:
+        logger.warning("No LLM API key set for provider '%s' — returning mock.", resolved_provider)
+        return {"content": "[MOCK] generate_text_direct output", "model": "mock", "tokens_used": 0}
+
+    resolved_model = model or settings.LLM_MODEL
+    logger.info("Calling direct prompt via %s (model=%s)", resolved_provider, resolved_model)
+
+    if resolved_provider == "gemini":
+        content = system_prompt
+        if user_prompt:
+            content += "\n\n" + user_prompt
+        messages = [{"role": "user", "content": content}]
+    else:
+        messages = [{"role": "system", "content": system_prompt}]
+        if user_prompt:
+            messages.append({"role": "user", "content": user_prompt})
+
+    response = client.chat.completions.create(
+        model=resolved_model,
+        messages=messages,
+        temperature=0.3,
+        max_tokens=1024,
+    )
+
+    result = response.choices[0].message.content
+    logger.info("Direct LLM response: %d chars, %d tokens", len(result or ""),
+                 response.usage.total_tokens if response.usage else 0)
+    return {
+        "content": result,
+        "model": response.model,
+        "tokens_used": response.usage.total_tokens if response.usage else 0,
+    }
+
+
 def generate_embedding(text: str, provider: str | None = None) -> list[float]:
     """Generate a vector embedding via the given provider."""
     client = _get_client(provider)

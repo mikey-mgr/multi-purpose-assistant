@@ -1,11 +1,12 @@
 """
 Prefect flows for the automated job application pipeline.
 
-Exposes four independently-deployable flows:
-  1. scrape-and-store    — run scrapers, insert jobs
-  2. match-jobs          — batch-classify unscored jobs
-  3. generate-matched    — generate docs for matched jobs
-  4. pull-and-process    — scrape → match → generate (all-in-one)
+Exposes five independently-deployable flows:
+  1. scrape-and-store      — run scrapers, insert jobs
+  2. match-jobs            — batch-classify unscored jobs
+  3. generate-matched      — generate docs for matched jobs
+  4. apply-agent           — process apply_instructions for matched jobs
+  5. pull-and-process      — scrape → match → generate → apply (all-in-one)
 """
 
 import logging
@@ -16,7 +17,7 @@ from prefect.tasks import task_input_hash
 
 from app.config import settings
 from app.matcher import batch_match_jobs
-from app.orchestrator import process_job_for_user
+from app.orchestrator import process_job_for_user, process_application
 from core.database import get_matched_unprocessed_jobs
 from scrapers.unified_scraper import UnifiedJobScraper
 
@@ -26,14 +27,21 @@ logger = logging.getLogger(__name__)
 # ── Tasks ──────────────────────────────────────────────────────────────
 
 @task(retries=2, retry_delay_seconds=30)
-def run_scrapers() -> int:
-    """Scrape all job boards and insert new jobs into PostgreSQL."""
+def run_scrapers(
+    site_names: list[str] | None = None,
+    max_pages: dict = {},
+) -> int:
+    """Scrape specified job boards and insert new jobs into PostgreSQL."""
     from core.database import init_db, insert_jobs
 
-    get_run_logger().info("Scraping job boards (iharare, vacancybox, vacancymail) ...")
+    run_logger = get_run_logger()
+    site_names = site_names or ["iharare", "vacancybox", "vacancymail"]
+    run_logger.info("Scraping job boards %s (max_pages=%s) ...", site_names, max_pages)
     scraper = UnifiedJobScraper()
+    kwargs = {"max_pages": max_pages} if max_pages else {}
     jobs_df = scraper.scrape_jobs(
-        site_name=["iharare", "vacancybox", "vacancymail"]
+        site_name=site_names,
+        **kwargs,
     )
     if jobs_df.empty:
         get_run_logger().warning("No jobs found from any site.")
@@ -44,7 +52,7 @@ def run_scrapers() -> int:
     return count
 
 
-@task(retries=2, retry_delay_seconds=30, cache_key_fn=task_input_hash)
+@task(retries=2, retry_delay_seconds=30)
 def match_pending_jobs(
     user_id: str,
     limit: int = 50,
@@ -83,6 +91,25 @@ def generate_application(
     }
 
 
+@task(timeout_seconds=120, retries=1)
+def apply_for_job(
+    job_id: int,
+    user_id: str,
+    resume_id: str | None = None,
+    generate_model: str | None = None,
+    generate_provider: str | None = None,
+) -> dict:
+    """Run the agentic apply step for one matched job."""
+    result = process_application(
+        user_id=user_id,
+        job_id=job_id,
+        resume_id=resume_id,
+        model=generate_model,
+        provider=generate_provider,
+    )
+    return {"job_id": job_id, "user_id": user_id, **result}
+
+
 @task
 def mark_processed(result: dict) -> None:
     """Log result."""
@@ -103,10 +130,13 @@ def mark_processed(result: dict) -> None:
     retry_delay_seconds=60,
     log_prints=True,
 )
-def scrape_and_store():
+def scrape_and_store(
+    site_names: list[str] | None = None,
+    max_pages: dict = {},
+):
     """Scrape iHarare, VacancyBox, VacancyMail and insert new jobs."""
     run_logger = get_run_logger()
-    count = run_scrapers()
+    count = run_scrapers(site_names=site_names, max_pages=max_pages)
     run_logger.info("Scrape complete — %d new jobs inserted.", count)
 
 
@@ -172,6 +202,61 @@ def generate_matched_flow(
             generate_provider=generate_provider,
         )
         mark_processed(result)
+        if result.get("status") == "completed":
+            apply_result = apply_for_job(
+                job_id=job.id,
+                user_id=user_id,
+                generate_model=generate_model,
+                generate_provider=generate_provider,
+            )
+            run_logger.info(
+                "Apply agent: job=%s action=%s status=%s",
+                job.id, apply_result.get("action"), apply_result.get("status"),
+            )
+
+
+@flow(
+    name="apply-agent",
+    description="Parse apply_instructions for matched jobs and send email / WhatsApp notification.",
+    retries=1,
+    retry_delay_seconds=60,
+    log_prints=True,
+)
+def apply_agent_flow(
+    user_id: str,
+    limit: int = 10,
+    generate_model: str | None = None,
+    generate_provider: str | None = None,
+):
+    """
+    Process apply_instructions for matched-but-unapplied jobs.
+
+    Parameters
+    ----------
+    user_id : str
+    limit : int
+        Max number of jobs to process this run.
+    generate_model : str | None
+    generate_provider : str | None
+    """
+    run_logger = get_run_logger()
+    jobs = fetch_matched_jobs(user_id, limit=limit)
+    if not jobs:
+        run_logger.info("No matched-but-unapplied jobs found.")
+        return
+
+    run_logger.info("Processing apply instructions for %d jobs.", len(jobs))
+    for job in jobs:
+        apply_result = apply_for_job(
+            job_id=job.id,
+            user_id=user_id,
+            generate_model=generate_model,
+            generate_provider=generate_provider,
+        )
+        run_logger.info(
+            "Apply agent: job=%s action=%s status=%s",
+            job.id, apply_result.get("action"), apply_result.get("status"),
+        )
 
 
 @flow(
@@ -236,6 +321,17 @@ def pull_and_process_jobs(
             generate_provider=generate_provider,
         )
         mark_processed(result)
+        if result.get("status") == "completed":
+            apply_result = apply_for_job(
+                job_id=job.id,
+                user_id=user_id,
+                generate_model=generate_model,
+                generate_provider=generate_provider,
+            )
+            run_logger.info(
+                "Apply agent: job=%s action=%s status=%s",
+                job.id, apply_result.get("action"), apply_result.get("status"),
+            )
 
 
 @flow(

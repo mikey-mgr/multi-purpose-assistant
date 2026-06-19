@@ -8,6 +8,11 @@ Pipeline:
   4. Build RenderCV YAML from DB data + LLM overrides
   5. Render PDF via rendercv, save DOCX for cover letter
   6. Snapshot everything in generated_documents table
+
+Post-generation agentic step:
+  7. Parse apply_instructions → decide email / external_link / unknown
+  8. Send email with attached docs, OR send WhatsApp notification
+  9. Update job_matches.status → 'applied'
 """
 
 import json
@@ -18,6 +23,8 @@ from core.database import (
     ScrapedJob,
     GeneratedDocument,
     save_generated_document,
+    update_job_match_status,
+    get_application_documents,
 )
 from app.schemas import GeneratedDocument as GDocSchema
 from app.llm import generate_text
@@ -29,6 +36,9 @@ from app.rag import (
 from app.rendercv_renderer import build_yaml_dict, render as rendercv_render
 from app.document_generator import ensure_output_dir, cover_letter_to_docx
 from app.utils import unique_path
+from app.apply_agent import parse_apply_instructions
+from app.email_sender import send_email
+from app.whatsapp_notifier import send_whatsapp
 
 logger = logging.getLogger(__name__)
 
@@ -212,3 +222,112 @@ def _parse_llm_output(raw: str) -> dict:
     except (json.JSONDecodeError, IndexError):
         logger.warning("LLM output not valid JSON — using DB data as-is")
     return {}
+
+
+def process_application(
+    user_id: str,
+    job_id: int,
+    resume_id: str | None = None,
+    model: str | None = None,
+    provider: str | None = None,
+) -> dict:
+    """
+    Agentic step after document generation:
+    1. Read apply_instructions from the job
+    2. LLM parses them into structured action
+    3. Send email with required docs, or WhatsApp notification
+    4. Update job_matches.status → 'applied'
+
+    Returns action result dict.
+    """
+    session = get_session()
+    try:
+        # ── 1. Load job + apply_instructions ──────────────────────────
+        job = session.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+        if not job:
+            logger.warning("Job %s not found — skipping application step.", job_id)
+            return {"action": "error", "reason": "job_not_found"}
+
+        instructions = job.apply_instructions or ""
+        if not instructions.strip():
+            logger.info("Job %s has no apply_instructions — marking as applied.", job_id)
+            update_job_match_status(job_id, user_id, "applied")
+            return {"action": "no_instructions", "status": "applied"}
+
+        # ── 2. Find active resume ─────────────────────────────────────
+        from core.database import Resume
+        resume_row = session.query(Resume).filter(
+            Resume.user_id == user_id,
+            Resume.is_active == True,
+        ).first()
+        resume_id = str(resume_row.id) if resume_row else resume_id
+
+        # ── 3. LLM parse apply_instructions ───────────────────────────
+        parsed = parse_apply_instructions(
+            apply_instructions=instructions,
+            job_title=job.title or "",
+            company=job.company or "",
+            job_url=job.job_url or "",
+            model=model,
+            provider=provider,
+        )
+        action = parsed.get("action", "unknown")
+        logger.info(
+            "Apply agent: job=%s action=%s recipient=%s",
+            job_id, action, parsed.get("recipient"),
+        )
+
+        # ── 4. Collect required document paths ────────────────────────
+        docs = get_application_documents(resume_id, job_id) if resume_id else {}
+        attachment_paths = []
+
+        required = parsed.get("required_docs", [])
+        if "resume" in required and docs.get("resume_pdf"):
+            attachment_paths.append(docs["resume_pdf"])
+        if "cover_letter" in required and docs.get("cover_letter_docx"):
+            attachment_paths.append(docs["cover_letter_docx"])
+        if "education_cert" in required:
+            attachment_paths.extend(docs.get("education_docs", []))
+        if "certification_cert" in required:
+            attachment_paths.extend(docs.get("certification_docs", []))
+
+        # ── 5. Route by action type ───────────────────────────────────
+        if action == "email":
+            recipient = parsed.get("recipient")
+            if recipient:
+                ok = send_email(
+                    to=recipient,
+                    subject=parsed.get("subject") or f"Application: {job.title}",
+                    body=parsed.get("body") or f"Please find attached my application for {job.title}.",
+                    attachments=attachment_paths or None,
+                )
+                if ok:
+                    update_job_match_status(job_id, user_id, "applied")
+                    return {"action": "email", "recipient": recipient, "status": "applied"}
+                else:
+                    # Email failed — notify user via WhatsApp
+                    note = parsed.get("notification_text") or f"Failed to send email for {job.title} at {job.company}. Send manually."
+                    send_whatsapp(note)
+                    return {"action": "email", "recipient": recipient, "status": "failed"}
+            else:
+                logger.warning("Email action but no recipient — falling back to unknown.")
+                action = "unknown"
+
+        if action in ("external_link", "unknown"):
+            note = parsed.get("notification_text") or (
+                f"Job: {job.title} at {job.company}. "
+                f"Apply instructions: {instructions[:200]}..."
+            )
+            send_whatsapp(note)
+            update_job_match_status(job_id, user_id, "applied")
+            return {"action": action, "status": "applied"}
+
+        # ── 6. Fallback ───────────────────────────────────────────────
+        update_job_match_status(job_id, user_id, "applied")
+        return {"action": "unknown", "status": "applied"}
+
+    except Exception:
+        logger.exception("Error in process_application for job %s", job_id)
+        return {"action": "error", "reason": "exception"}
+    finally:
+        session.close()

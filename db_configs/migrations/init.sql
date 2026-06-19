@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS job_matches (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     job_id     INTEGER NOT NULL REFERENCES scraped_jobs(id) ON DELETE CASCADE,
     user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    status     VARCHAR(20) NOT NULL CHECK (status IN ('matched', 'rejected')),
+    status     VARCHAR(20) NOT NULL CHECK (status IN ('matched', 'rejected', 'applied')),
     score      INTEGER CHECK (score >= 0 AND score <= 100),
     reason     TEXT,
     matched_by VARCHAR(20) DEFAULT 'llm' CHECK (matched_by IN ('llm', 'keyword_fallback')),

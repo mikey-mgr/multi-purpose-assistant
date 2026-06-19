@@ -40,6 +40,12 @@ def _build_user_summary(user_id: str) -> dict:
         if not resume_id:
             return {}
 
+        # Active resume
+        resume = session.get(Resume, resume_id)
+        summary = (resume.professional_summary or "")
+        words = summary.split()
+        summary_trunc = " ".join(words[:70]) + ("..." if len(words) > 70 else "")
+
         # Technical skills (exclude Soft Skills)
         skill_rows = session.execute(
             select(Skill.skill_name).where(
@@ -48,44 +54,50 @@ def _build_user_summary(user_id: str) -> dict:
             )
         ).scalars().all()
 
-        # Work experience titles
-        title_rows = session.execute(
-            select(WorkExperience.job_title).where(
-                WorkExperience.resume_id == resume_id
-            )
-        ).scalars().all()
-
         # Education
         edu_rows = session.execute(
             select(Education).where(Education.resume_id == resume_id)
         ).scalars().all()
 
-        # Project tech stacks
-        stack_rows = session.execute(
-            select(Project.tech_stack).where(Project.resume_id == resume_id)
+        # Work experience with bullet points (first 3)
+        exp_rows = session.execute(
+            select(WorkExperience).where(WorkExperience.resume_id == resume_id).order_by(WorkExperience.display_order)
+        ).scalars().all()
+
+        # Projects with bullet points (first 2)
+        proj_rows = session.execute(
+            select(Project).where(Project.resume_id == resume_id).order_by(Project.display_order)
         ).scalars().all()
 
         return {
+            "professional_summary": summary_trunc,
             "technical_skills": sorted(set(skill_rows)),
-            "work_experience_titles": sorted(set(title_rows)),
+            "work_experience": [
+                {
+                    "company": e.company_name,
+                    "title": e.job_title,
+                    "highlights": (e.bullet_points or [])[:3],
+                }
+                for e in exp_rows
+            ],
             "education": [
                 f"{e.degree_type} {e.field_of_study}" for e in edu_rows
             ],
-            "project_technologies": sorted(set(
-                tech for stack in stack_rows if stack for tech in stack
-            )),
+            "projects": [
+                {
+                    "name": p.project_name,
+                    "highlights": (p.bullet_points or [])[:2],
+                }
+                for p in proj_rows
+            ],
         }
     finally:
         session.close()
 
 
 def _build_prompt(profile: dict, jobs: list[ScrapedJob]) -> str:
-    """Build the batch LLM prompt."""
+    """Build the batch LLM prompt (data portion — instructions in DB prompt)."""
     lines = [
-        "You are a job matching assistant. Given a user's profile and a list of",
-        "job postings, determine which jobs are relevant to the user's background.",
-        "",
-        "## User Profile",
         json.dumps(profile, indent=2),
         "",
         "## Jobs",
@@ -103,11 +115,7 @@ def _build_prompt(profile: dict, jobs: list[ScrapedJob]) -> str:
             "",
         ])
 
-    lines.append(
-        "Return ONLY a JSON array of objects with keys: "
-        "job_index (int), status (\"matched\"|\"rejected\"), "
-        "score (int 0-100), reason (short explanation)."
-    )
+    # instructions in DB prompt
     return "\n".join(lines)
 
 
@@ -166,11 +174,11 @@ def batch_match_jobs(
         return []
 
     logger.info(
-        "Profile: %d skills, %d work titles, %d education entries, %d project techs",
+        "Profile: %d skills, %d work entries, %d education entries, %d projects",
         len(profile.get("technical_skills", [])),
-        len(profile.get("work_experience_titles", [])),
+        len(profile.get("work_experience", [])),
         len(profile.get("education", [])),
-        len(profile.get("project_technologies", [])),
+        len(profile.get("projects", [])),
     )
 
     jobs = get_unscored_jobs(user_id, limit=limit)

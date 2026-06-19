@@ -13,20 +13,10 @@ from urllib.parse import urljoin, urlparse
 from datetime import datetime, timedelta
 import logging
 
+from scrapers.utils import decode_cfemail, SiteScrapeError
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-
-def decode_cfemail(cfemail_hex: str) -> str | None:
-    """Decode Cloudflare Email Protection encoded email (XOR with first byte)."""
-    if not cfemail_hex:
-        return None
-    try:
-        raw = bytes.fromhex(cfemail_hex)
-        key = raw[0]
-        return ''.join(chr(b ^ key) for b in raw[1:])
-    except Exception:
-        return None
 
 class VacancyBoxScraper:
     def __init__(self):
@@ -115,7 +105,14 @@ class VacancyBoxScraper:
                             if job_url in existing_urls:
                                 skipped += 1
                             else:
-                                detailed_data = self._scrape_job_details(job_url)
+                                try:
+                                    detailed_data = self._scrape_job_details(job_url)
+                                except requests.HTTPError as e:
+                                    if e.response and e.response.status_code == 403:
+                                        logger.warning("VacancyBox returned 403 — site may be blocking. Skipping remaining jobs.")
+                                        # Break both inner loop and outer processing
+                                        raise
+                                    raise
                                 job_data.update(detailed_data)
                                 standardized_job = self._standardize_job_data(job_data)
                                 all_jobs.append(standardized_job)
@@ -125,6 +122,13 @@ class VacancyBoxScraper:
                     else:
                         logger.warning(f"Failed to extract data from job card")
                         
+                except requests.HTTPError as e:
+                    if e.response and e.response.status_code == 403:
+                        raise SiteScrapeError(site="vacancybox", message=f"403 on {job_url}")
+                    logger.error(f"HTTP error for job listing: {e}")
+                    continue
+                except SiteScrapeError:
+                    raise
                 except Exception as e:
                     logger.error(f"Error processing job listing: {e}")
                     continue
@@ -194,6 +198,8 @@ class VacancyBoxScraper:
             
         try:
             response = self.session.get(job_url, timeout=10)
+            if response.status_code == 403:
+                raise requests.HTTPError(f"403 Client Error: Forbidden for url: {job_url}", response=response)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
             
@@ -269,13 +275,12 @@ class VacancyBoxScraper:
 
                 # Helper: replace Cloudflare placeholders with decoded emails
                 def _resolve_cfemail(text: str, container) -> str:
-                    # Normalize NBSP to space so placeholder matches extracted text
                     text = text.replace('\xa0', ' ')
-                    for span in container.find_all('span', class_='__cf_email__'):
-                        real = decode_cfemail(span.get('data-cfemail', ''))
+                    for el in container.find_all(lambda tag: tag.get('data-cfemail')):
+                        real = decode_cfemail(el.get('data-cfemail', ''))
                         if real:
-                            placeholder = span.get_text(strip=True).replace('\xa0', ' ')
-                            text = text.replace(placeholder, real)
+                            placeholder = el.get_text(strip=True).replace('\xa0', ' ')
+                            text = text.replace(placeholder, f' {real} ')
                     return text
 
                 # Find and remove elements that clearly signal the end of relevant job description,
@@ -325,12 +330,13 @@ class VacancyBoxScraper:
                         if isinstance(elem, str):
                             return elem
                         for a in elem.find_all('a', href=True):
-                            # Check if this <a> wraps a Cloudflare email span
+                            # Cloudflare email: class on <a> itself OR nested <span>
                             cf = a.find('span', class_='__cf_email__')
-                            if cf:
-                                real = decode_cfemail(cf.get('data-cfemail', ''))
+                            cf_data = a.get('data-cfemail') or (cf and cf.get('data-cfemail'))
+                            if cf_data:
+                                real = decode_cfemail(cf_data)
                                 if real:
-                                    a.replace_with(real)
+                                    a.replace_with(f' {real} ')
                                     continue
                             # Regular link — render as "text (url)"
                             href = a['href']
