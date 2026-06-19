@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS education (
     start_date      DATE,
     end_date        DATE,
     grade_or_class  VARCHAR(50),
-    display_order   INT
+    display_order   INT,
+    document_path   TEXT   -- path to file in data/education/
 );
 
 CREATE TABLE IF NOT EXISTS certifications (
@@ -88,7 +89,8 @@ CREATE TABLE IF NOT EXISTS certifications (
     cert_name           VARCHAR(150) NOT NULL,
     issuing_organization VARCHAR(150) NOT NULL,
     issue_date          DATE,
-    credential_url      TEXT
+    credential_url      TEXT,
+    document_path       TEXT   -- path to file in data/certifications/
 );
 
 -- ── Skills ────────────────────────────────────────────────────────────

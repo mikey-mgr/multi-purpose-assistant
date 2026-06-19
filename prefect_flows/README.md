@@ -91,9 +91,9 @@ Visit http://localhost:4200/deployments after starting `deployment.py`:
 
 | Deployment | Flow | Cron | Purpose |
 |-----------|------|------|---------|
-| `scraper-only` | `scrape-and-store` | `0 */6 * * *` | Scrape job boards |
-| `matcher-only` | `match-jobs` | — *(manual)* | Batch-classify unscored jobs |
-| `generator-only` | `generate-matched` | — *(manual)* | Generate docs for matched jobs |
+| `01-scraper-only` | `scrape-and-store` | `0 */6 * * *` | Scrape job boards |
+| `02-matcher-only` | `match-jobs` | — *(manual)* | Batch-classify unscored jobs |
+| `03-generator-only` | `generate-matched` | — *(manual)* | Generate docs for matched jobs |
 | `job-pipeline` | `pull-and-process-jobs` | `0 */6 * * *` | Scrape → match → generate |
 
 ### Default parameters (set in `deployment.py`)
@@ -132,8 +132,8 @@ scrapers/unified_scraper.py).
 
 From the Prefect UI, click **Run** on any deployment, set only the params
 you care about, and it runs independently.  For example:
-- **Just re-match** existing unscored jobs → run `matcher-only`
-- **Just regenerate** documents for already-matched jobs → run `generator-only`
+- **Just re-match** existing unscored jobs → run `02-matcher-only`
+- **Just regenerate** documents for already-matched jobs → run `03-generator-only`
 
 ### Test the Python modules directly (no Prefect server needed)
 

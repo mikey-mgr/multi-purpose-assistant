@@ -115,6 +115,7 @@ class Education(Base):
     end_date        = Column(Date)
     grade_or_class  = Column(String(50))
     display_order   = Column(Integer)
+    document_path   = Column(Text)  # path to file in data/education/
 
     resume = relationship('Resume', back_populates='education')
 
@@ -130,6 +131,7 @@ class Certification(Base):
     issuing_organization = Column(String(150), nullable=False)
     issue_date          = Column(Date)
     credential_url      = Column(Text)
+    document_path       = Column(Text)  # path to file in data/certifications/
 
     resume = relationship('Resume', back_populates='certifications')
 
