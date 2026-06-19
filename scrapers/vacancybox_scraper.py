@@ -13,9 +13,20 @@ from urllib.parse import urljoin, urlparse
 from datetime import datetime, timedelta
 import logging
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
+def decode_cfemail(cfemail_hex: str) -> str | None:
+    """Decode Cloudflare Email Protection encoded email (XOR with first byte)."""
+    if not cfemail_hex:
+        return None
+    try:
+        raw = bytes.fromhex(cfemail_hex)
+        key = raw[0]
+        return ''.join(chr(b ^ key) for b in raw[1:])
+    except Exception:
+        return None
 
 class VacancyBoxScraper:
     def __init__(self):
@@ -26,7 +37,7 @@ class VacancyBoxScraper:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
         
-    def scrape_jobs(self, max_pages=1, delay=None, max_jobs=None):
+    def scrape_jobs(self, max_pages=1, delay=None, max_jobs=None, existing_urls: set | None = None):
         """
         Scrape jobs from vacancybox.co.zw using AJAX pagination
         
@@ -36,14 +47,17 @@ class VacancyBoxScraper:
             max_jobs (int, optional): The total number of jobs to scrape. 
                                             If None, scrapes up to max_pages.
                                             If specified, scraping stops when this number is reached.
+            existing_urls (set): Set of job URLs already in the DB – detail pages for these will be skipped.
             
         Returns:
             list: A list of dictionaries, each representing a job listing, standardized for the backend.
         """
         if delay is None:
             delay = random.randint(5, 15)
+        existing_urls = existing_urls or set()
 
         all_jobs = []
+        skipped = 0
         
         for page in range(1, max_pages + 1):
             if max_jobs is not None and len(all_jobs) >= max_jobs:
@@ -98,14 +112,14 @@ class VacancyBoxScraper:
                     if job_data:
                         job_url = job_data.get('job_url')
                         if job_url:
-                            detailed_data = self._scrape_job_details(job_url)
-                            
-                            job_data.update(detailed_data)
-                            
-                            standardized_job = self._standardize_job_data(job_data)
-                            all_jobs.append(standardized_job)
-                            
-                            time.sleep(delay)
+                            if job_url in existing_urls:
+                                skipped += 1
+                            else:
+                                detailed_data = self._scrape_job_details(job_url)
+                                job_data.update(detailed_data)
+                                standardized_job = self._standardize_job_data(job_data)
+                                all_jobs.append(standardized_job)
+                                time.sleep(delay)
                         else:
                             logger.warning(f"No job_url found for job: {job_data.get('title', 'Unknown')}")
                     else:
@@ -117,7 +131,7 @@ class VacancyBoxScraper:
             
             time.sleep(delay)
             
-        logger.info(f"Total jobs scraped: {len(all_jobs)}")
+        logger.info(f"Total jobs scraped: {len(all_jobs)} (skipped %d existing)", skipped)
         
         if max_jobs is not None and len(all_jobs) > max_jobs:
             all_jobs = all_jobs[:max_jobs]
@@ -253,37 +267,123 @@ class VacancyBoxScraper:
                 if expires_strong:
                     expires_strong.decompose()
 
+                # Helper: replace Cloudflare placeholders with decoded emails
+                def _resolve_cfemail(text: str, container) -> str:
+                    # Normalize NBSP to space so placeholder matches extracted text
+                    text = text.replace('\xa0', ' ')
+                    for span in container.find_all('span', class_='__cf_email__'):
+                        real = decode_cfemail(span.get('data-cfemail', ''))
+                        if real:
+                            placeholder = span.get_text(strip=True).replace('\xa0', ' ')
+                            text = text.replace(placeholder, real)
+                    return text
+
                 # Find and remove elements that clearly signal the end of relevant job description,
-                # such as "TO APPLY" sections or contact info.
+                # such as "TO APPLY" sections or contact info, and capture them as apply_instructions.
                 end_section_markers = [
                     re.compile(r'TO APPLY', re.IGNORECASE),
+                    re.compile(r'Application Instructions', re.IGNORECASE),
+                    re.compile(r'How to Apply', re.IGNORECASE),
                     re.compile(r'Interested candidates must submit', re.IGNORECASE),
                     re.compile(r'All applications should be emailed to', re.IGNORECASE),
                     re.compile(r'The deadline for submission of applications', re.IGNORECASE),
                     re.compile(r'Please note that only shortlisted applicants will be responded to', re.IGNORECASE),
                     re.compile(r'AFC Holdings is an equal opportunity employer', re.IGNORECASE),
-                    re.compile(r'NB: Only shortlisted candidates will be contacted', re.IGNORECASE)
+                    re.compile(r'NB: Only shortlisted candidates will be contacted', re.IGNORECASE),
+                    re.compile(r'Interested candidates should submit', re.IGNORECASE),
+                    re.compile(r'Send your (CV|application)', re.IGNORECASE),
                 ]
 
                 # Iterate through all direct children of job_desc_div to find the cutoff point
                 elements_to_keep = []
+                apply_elements = []  # store element refs so we can render links too
                 found_end_marker = False
                 for child in job_desc_div.children:
-                    if found_end_marker:
-                        break # Stop processing if we've found an end marker
-
-                    if isinstance(child, str): # Handle text nodes directly
+                    if isinstance(child, str):
                         text_content = child.strip()
                         if any(marker.search(text_content) for marker in end_section_markers):
                             found_end_marker = True
+                            apply_elements.append(text_content)
+                        elif found_end_marker:
+                            apply_elements.append(text_content)
                         else:
                             elements_to_keep.append(child)
-                    elif child.name: # Handle tag elements
+                    elif child.name:
                         text_content = child.get_text(strip=True)
                         if any(marker.search(text_content) for marker in end_section_markers):
                             found_end_marker = True
+                            apply_elements.append(child)
+                        elif found_end_marker:
+                            apply_elements.append(child)
                         else:
                             elements_to_keep.append(child)
+
+                if apply_elements:
+                    # Render each element preserving link text + URL,
+                    # but decode Cloudflare email links to the real email
+                    def _render_links(elem) -> str:
+                        if isinstance(elem, str):
+                            return elem
+                        for a in elem.find_all('a', href=True):
+                            # Check if this <a> wraps a Cloudflare email span
+                            cf = a.find('span', class_='__cf_email__')
+                            if cf:
+                                real = decode_cfemail(cf.get('data-cfemail', ''))
+                                if real:
+                                    a.replace_with(real)
+                                    continue
+                            # Regular link — render as "text (url)"
+                            href = a['href']
+                            txt = a.get_text(strip=True) or href
+                            a.replace_with(f'{txt} ({href})')
+                        return elem.get_text(separator='\n', strip=True)
+
+                    parts = []
+                    for e in apply_elements:
+                        if isinstance(e, str):
+                            if e.strip():
+                                parts.append(e)
+                        elif e.get_text(strip=True):
+                            parts.append(_render_links(e))
+                    raw = '\n'.join(filter(None, parts))
+                    # Decode any remaining Cloudflare emails in bare text nodes
+                    raw = _resolve_cfemail(raw, job_desc_div)
+                    details['apply_instructions'] = raw
+                else:
+                    # ── Fallback: no marker found → look for Cloudflare emails + links ──
+                    cf_parts = []
+                    for span in job_desc_div.find_all('span', class_='__cf_email__'):
+                        real = decode_cfemail(span.get('data-cfemail', ''))
+                        if not real:
+                            continue
+                        parent = span.find_parent(['p', 'div', 'li'])
+                        if parent:
+                            txt = parent.get_text(separator='\n', strip=True)
+                            txt = _resolve_cfemail(txt, parent)
+                            cf_parts.append(txt)
+                            nxt = parent.find_next_sibling(['p', 'div'])
+                            if nxt:
+                                txt2 = nxt.get_text(separator='\n', strip=True)
+                                txt2 = _resolve_cfemail(txt2, nxt)
+                                cf_parts.append(txt2)
+                    # Collect all mailto: and external links in the description
+                    for a in job_desc_div.find_all('a', href=True):
+                        href = a['href']
+                        if href.startswith('mailto:'):
+                            cf_parts.append(href.replace('mailto:', ''))
+                        elif href.startswith('http') and 'vacancybox' not in href and 'google' not in href:
+                            cf_parts.append(a.get_text(strip=True) or href)
+                    if cf_parts:
+                        details['apply_instructions'] = '\n'.join(filter(None, cf_parts))
+                    else:
+                        # ── Last resort: grab the last 2 <p> from the description ──
+                        all_ps = [p for p in job_desc_div.find_all('p') if p.get_text(strip=True)]
+                        if len(all_ps) >= 2:
+                            details['apply_instructions'] = '\n'.join(
+                                p.get_text(separator='\n', strip=True) for p in all_ps[-2:]
+                            )
+                        elif all_ps:
+                            details['apply_instructions'] = all_ps[-1].get_text(separator='\n', strip=True)
                 
                 # Create a new, clean soup from the elements we want to keep
                 cleaned_soup = BeautifulSoup('', 'html.parser')
@@ -422,8 +522,9 @@ class VacancyBoxScraper:
             'compensation': job_data.get('salary') or None, # VacancyBox might have salary
             'date_posted': job_data.get('date_posted_detailed') or job_data.get('date_posted') or None,
             'expires': job_data.get('expires') or None,
-            'category': job_data.get('category') or None, # VacancyBox might have category
-            'remote': None # Assuming no explicit remote status for now
+            'category': job_data.get('category') or None,
+            'remote': None,
+            'apply_instructions': job_data.get('apply_instructions') or None,
         }
         return standardized
 

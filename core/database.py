@@ -3,7 +3,8 @@ from datetime import datetime
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text, Date, DateTime, Boolean,
-    ARRAY, ForeignKey, text, Index, select, Numeric, func, and_
+    ARRAY, ForeignKey, text, Index, select, Numeric, func, and_,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID, TSVECTOR
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
@@ -187,7 +188,8 @@ class ScrapedJob(Base):
     remote       = Column(Text)
     job_embedding = Column(Vector(1536))
     search_vector = Column(TSVECTOR)
-    scraped_at   = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+    scraped_at         = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+    apply_instructions = Column(Text)
 
 
 # ── Job Matches ────────────────────────────────────────────────────────
@@ -402,15 +404,27 @@ def get_unscored_jobs(user_id: str, limit: int = 50):
 
 
 def get_matched_unprocessed_jobs(user_id: str, limit: int = 10):
-    """Fetch matched jobs that don't have a generated document yet."""
+    """
+    Fetch matched jobs that don't have a generated resume for the user's active resume yet.
+    """
     session = get_session()
     try:
+        # Find user's active resume
+        resume = session.query(Resume).filter(
+            Resume.user_id == user_id,
+            Resume.is_active == True,
+        ).first()
+        if not resume:
+            logger.warning("No active resume for user %s", user_id)
+            return []
+
         matched_ids = session.query(JobMatch.job_id).filter(
             JobMatch.user_id == user_id,
             JobMatch.status == 'matched',
         )
         generated_ids = session.query(GeneratedDocument.job_id).filter(
             GeneratedDocument.document_type == 'resume',
+            GeneratedDocument.resume_id == resume.id,
         )
         return session.query(ScrapedJob).filter(
             ScrapedJob.id.in_(matched_ids),
@@ -479,6 +493,16 @@ def _parse_date(value):
         return None
 
 
+def get_existing_job_urls() -> set[str]:
+    """Return all job_url values currently in scraped_jobs (for skip logic)."""
+    session = get_session()
+    try:
+        rows = session.query(ScrapedJob.job_url).all()
+        return {r[0] for r in rows if r[0]}
+    finally:
+        session.close()
+
+
 def insert_jobs(jobs_list):
     """Insert a list of job dicts into scraped_jobs. Skips duplicates by job_url."""
     if not jobs_list:
@@ -509,6 +533,7 @@ def insert_jobs(jobs_list):
                 expires=_parse_date(job.get('expires')),
                 category=job.get('category'),
                 remote=job.get('remote'),
+                apply_instructions=job.get('apply_instructions'),
             )
             session.add(db_job)
             count += 1

@@ -16,9 +16,10 @@ from prefect.blocks.system import Secret
 
 SECRETS = [
     ("app-config-db-conn-uri", "DB_CONN_URI", "Database connection URI"),
-    ("app-config-openai-api-key", "OPENAI_API_KEY", "OpenAI API key"),
     ("app-config-openrouter-api-key", "OPENROUTER_API_KEY", "OpenRouter API key"),
     ("app-config-gemini-api-key", "GEMINI_API_KEY", "Google Gemini API key"),
+    ("app-config-llm-provider", "LLM_PROVIDER", "Default LLM provider (openrouter | gemini)"),
+    ("app-config-llm-model", "LLM_MODEL", "Default LLM model for generation"),
     ("app-config-serpapi-api-key", "SERPAPI_API_KEY", "SerpAPI key"),
     ("app-config-gmail-address", "GMAIL_ADDRESS", "Gmail sending address"),
     ("app-config-gmail-app-password", "GMAIL_APP_PASSWORD", "Gmail app password"),

@@ -177,6 +177,7 @@ def _fetch_raw_profile_data(user_id, resume_id=None):
                     "description": p.description,
                     "start_date": None,
                     "end_date": None,
+                    "project_url": p.project_url,
                     "bullet_points": p.bullet_points or [],
                 }
                 for p in projects

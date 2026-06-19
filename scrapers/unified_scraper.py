@@ -14,6 +14,7 @@ _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+from core.database import get_existing_job_urls
 from scrapers.vacancymail_scraper import VacancyMailScraper
 from scrapers.iharare_scraper import IHarareJobsScraper
 from scrapers.vacancybox_scraper import VacancyBoxScraper
@@ -25,25 +26,25 @@ class UnifiedJobScraper:
     Unified scraper that manages all custom site scrapers
     Provides JobSpy-compatible interface for easy integration
     """
-    
+
     def __init__(self):
         self.scrapers = {
             'vacancymail': VacancyMailScraper(),
             'iharare': IHarareJobsScraper(),
             'vacancybox': VacancyBoxScraper(),
         }
-    
-    def scrape_jobs(self, site_name: Union[str, List[str]] = None, results_wanted: int = 50, 
+
+    def scrape_jobs(self, site_name: Union[str, List[str]] = None, results_wanted: int = 50,
                    hours_old: int = 72, **kwargs) -> pd.DataFrame:
         """
         JobSpy-compatible interface for scraping jobs
-        
+
         Args:
             site_name (list or str): Sites to scrape from
             results_wanted (int): Maximum number of results
             hours_old (int): How old jobs can be (hours)
             **kwargs: Additional parameters
-            
+
         Returns:
             pandas.DataFrame: Combined job listings from all requested sites
         """
@@ -51,22 +52,25 @@ class UnifiedJobScraper:
             site_name = list(self.scrapers.keys())
         elif isinstance(site_name, str):
             site_name = [site_name]
-        
+
+        existing_urls = get_existing_job_urls()
+        logger.info("Loaded %d existing job URLs to skip", len(existing_urls))
+
         all_jobs = []
         # Give each site the full results_wanted to maximize job collection
-        results_per_site = results_wanted  # Let each site try to get the full amount
-        
+        results_per_site = results_wanted
+
         for site in site_name:
             if site not in self.scrapers:
                 logger.warning(f"Site '{site}' not supported. Available sites: {list(self.scrapers.keys())}")
                 continue
-                
+
             try:
                 logger.info(f"Scraping {site}...")
                 scraper = self.scrapers[site]
-                
+
                 # Let each site use its own defaults (max_pages, random delay 5-15s, all jobs)
-                jobs_result = scraper.scrape_jobs()
+                jobs_result = scraper.scrape_jobs(existing_urls=existing_urls)
                 
                 # Convert to DataFrame if it's a list
                 if isinstance(jobs_result, list):

@@ -2,16 +2,22 @@
 Application configuration.
 
 Precedence:
-  1. Prefect Secret Blocks (when Prefect server is reachable)
+  1. OS environment variables (PowerShell `$env:`) — highest priority
   2. .env file (local development, gitignored)
+  3. Prefect Secret Blocks (when Prefect server is reachable)
 
 For production: store every key in Prefect, delete .env.
 """
 
+import logging
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env but never override existing OS env vars
+# (PowerShell session vars take precedence over .env)
+load_dotenv(override=False)
+
+logger = logging.getLogger(__name__)
 
 
 class Settings:
@@ -21,17 +27,14 @@ class Settings:
         "postgresql://postgres:@localhost:5432/ai_assistant",
     )
 
-    # ── LLM Providers ───────────────────────────────────────────────
-    OPENAI_API_KEY: str | None = os.getenv("OPENAI_API_KEY")
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4")
+    # ── LLM Provider (OpenRouter or Gemini) ─────────────────────────
+    OPENROUTER_API_KEY: str | None = os.getenv("OPENROUTER_API_KEY")
+    GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY")
+
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openrouter")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "openai/gpt-4o")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "1536"))
-
-    OPENROUTER_API_KEY: str | None = os.getenv("OPENROUTER_API_KEY")
-    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o")
-
-    GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY")
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
     # ── Services ────────────────────────────────────────────────────
     SERPAPI_API_KEY: str | None = os.getenv("SERPAPI_API_KEY")
@@ -50,12 +53,13 @@ class Settings:
     # ── Key names in Prefect ───────────────────────────────────────
     _SECRET_KEYS = {
         "DB_CONN_URI": "db-conn-uri",
-        "OPENAI_API_KEY": "openai-api-key",
         "OPENROUTER_API_KEY": "openrouter-api-key",
         "GEMINI_API_KEY": "gemini-api-key",
         "SERPAPI_API_KEY": "serpapi-api-key",
         "GMAIL_ADDRESS": "gmail-address",
         "GMAIL_APP_PASSWORD": "gmail-app-password",
+        "LLM_PROVIDER": "llm-provider",
+        "LLM_MODEL": "llm-model",
     }
 
     @classmethod
@@ -82,3 +86,8 @@ class Settings:
 
 settings = Settings()
 Settings.from_prefect()  # override .env with Prefect Secret blocks if reachable
+
+# Debug-friendly log (password masked)
+_uri_parts = settings.DB_CONN_URI.split("@")
+_display_uri = f"...@{_uri_parts[-1]}" if len(_uri_parts) > 1 else settings.DB_CONN_URI
+logger.debug("DB_CONN_URI resolved to: %s", _display_uri)

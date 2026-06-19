@@ -13,9 +13,8 @@ from urllib.parse import urljoin, urlparse
 from datetime import datetime, timedelta
 import logging
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 class IHarareJobsScraper:
     def __init__(self):
@@ -26,7 +25,7 @@ class IHarareJobsScraper:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
         
-    def scrape_jobs(self, max_pages=2, delay=None, max_jobs=None):
+    def scrape_jobs(self, max_pages=2, delay=None, max_jobs=None, existing_urls: set | None = None):
         """
         Scrape jobs from ihararejobs.com
         
@@ -34,14 +33,17 @@ class IHarareJobsScraper:
             max_pages (int): Maximum number of pages to scrape
             delay (int): Delay between requests in seconds
             max_jobs (int): Maximum number of jobs to scrape. If None, all available jobs up to max_pages will be scraped.
+            existing_urls (set): Set of job URLs already in the DB – detail pages for these will be skipped.
             
         Returns:
             list: A list of dictionaries, each representing a job listing, standardized for the backend.
         """
         if delay is None:
             delay = random.randint(5, 15)
+        existing_urls = existing_urls or set()
 
         all_jobs = []
+        skipped = 0
         
         for page in range(1, max_pages + 1):
             # Stop if we've reached the maximum desired jobs
@@ -80,20 +82,16 @@ class IHarareJobsScraper:
                 try:
                     job_data = self._extract_listing_data(job_card)
                     if job_data:
-                        # Get detailed job information
                         job_url = job_data.get('job_url')
                         if job_url:
-                            detailed_data = self._scrape_job_details(job_url)
-                            
-                            # Merge data
-                            job_data.update(detailed_data)
-                            
-                            # Standardize and add to all_jobs
-                            standardized_job = self._standardize_job_data(job_data)
-                            all_jobs.append(standardized_job)
-                            
-                            # Respectful delay
-                            time.sleep(delay)
+                            if job_url in existing_urls:
+                                skipped += 1
+                            else:
+                                detailed_data = self._scrape_job_details(job_url)
+                                job_data.update(detailed_data)
+                                standardized_job = self._standardize_job_data(job_data)
+                                all_jobs.append(standardized_job)
+                                time.sleep(delay)
                             
                 except Exception as e:
                     logger.error(f"Error processing job listing: {e}")
@@ -105,7 +103,7 @@ class IHarareJobsScraper:
             # Continue to next page (we'll rely on max_pages limit)
             # Skip pagination check since we know the URL pattern works
         
-        logger.info(f"Total jobs scraped: {len(all_jobs)}")
+        logger.info(f"Total jobs scraped: {len(all_jobs)} (skipped %d existing)", skipped)
         
         return all_jobs
 

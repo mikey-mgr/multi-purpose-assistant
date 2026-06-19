@@ -12,7 +12,7 @@ This is the engine. It's just Python code you can import and run directly:
 from app.orchestrator import process_job_for_user
 process_job_for_user(user_id="xxx", job_id=123)   # runs now
 ```
-It scrapes jobs → stores them in PostgreSQL → fetches a user's profile → calls an LLM to rewrite sections → builds a RenderCV YAML → renders a PDF → snapshots everything in `generated_documents`. Zero infrastructure needed beyond PostgreSQL.
+It scrapes jobs → stores them in PostgreSQL → batch-classifies unscored jobs via LLM (matched/rejected) → for matched jobs: fetches user's profile → calls LLM to rewrite sections → builds RenderCV YAML → renders PDF → generates cover letter DOCX → snapshots everything in `generated_documents`.
 
 ### 2. `prefect_flows/` — The Scheduler (Optional)
 Prefect is a separate background worker that calls the same `app.*` functions on a cron schedule. It adds:
@@ -30,37 +30,34 @@ You can run the library *without* Prefect (python script, cron job, notebook). P
 │ Job Scrapers (6h)   │  ← scrapers/*.py (iharare, vacancybox, vacancymail)
 │  unified_scraper    │
 └──────────┬──────────┘
-           │ raw job postings (inserted via core.database.insert_jobs)
+           │ raw job postings
            ▼
-┌─────────────────────┐
-│ PostgreSQL          │  ← db_configs/migrations/init.sql
-│  ai_assistant       │
-│   ├─ scraped_jobs   │  ← hybrid search: tsvector (keyword) + vector (semantic)
-│   ├─ users          │
-│   ├─ resumes        │  ← vector(1536) on summary, experience, projects
-│   ├─ work_experience│
-│   ├─ projects       │
-│   ├─ education      │
-│   ├─ certifications │
-│   ├─ skills         │
-│   └─ prompts        │  ← versioned system prompts for LLM
-└──────────┬──────────┘
-           │ fetch unprocessed jobs via app.rag
-           ▼
-┌─────────────────────┐
-│ Orchestrator        │  ← app/orchestrator.py
-│  (Prefect flow)     │  ← prefect_flows/job_pipeline.py
-└──────────┬──────────┘
-           │
-           ▼
-┌──────────────────────────────────────┐
-│  1. Assemble user profile (RAG)      │  ← app/rag.py
-│  2. Build prompt from template       │  ← core.database.build_prompt()
-│  3. Call LLM (gpt-4 / etc.)          │  ← app/llm.py
-│  4. Generate PDF resume              │  ← app/document_generator.py
-│  5. Generate DOCX cover letter       │
-│  6. Store in generated_documents/    │
-└──────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│ PostgreSQL (ai_assistant)                            │
+│  scraped_jobs, users, resumes, work_experience,      │
+│  education, certifications, projects, skills,         │
+│  prompts, job_matches                                │
+└────────────────────┬─────────────────────────────────┘
+                     │
+                     ▼
+┌──────────────────────────────────────────────────────┐
+│ Batch Matcher (app/matcher.py)                       │
+│  fetches unscored jobs → LLM classifies each         │
+│  as "matched" or "rejected" → persists to            │
+│  job_matches table                                   │
+│  (uses cheap model: openai/gpt-4o-mini)              │
+└────────────────────┬─────────────────────────────────┘
+                     │ only matched jobs proceed
+                     ▼
+┌──────────────────────────────────────────────────────┐
+│ Generator (app/orchestrator.py)                      │
+│  1. Assemble user profile (RAG)                      │
+│  2. Build prompt from template                       │
+│  3. Call LLM (gpt-4o / main model)                   │
+│  4. Generate PDF resume (rendercv)                   │
+│  5. Generate DOCX cover letter                       │
+│  6. Snapshot in generated_documents                  │
+└──────────────────────────────────────────────────────┘
 ```
 
 ## Project Structure
@@ -69,10 +66,13 @@ You can run the library *without* Prefect (python script, cron job, notebook). P
 ├── app/                    # Core application logic (prefect imports from here)
 │   ├── config.py           # Settings (env vars → Prefect Secrets fallback)
 │   ├── schemas.py          # Pydantic models
-│   ├── llm.py              # LLM prompt building + API calls
+│   ├── llm.py              # LLM prompt building + API calls (OpenRouter / Gemini via OpenAI SDK)
 │   ├── rag.py              # RAG retrieval: profile assembly + hybrid job search
-│   ├── document_generator.py  # PDF (weasyprint) + DOCX (python-docx) output
-│   └── orchestrator.py     # process_job_for_user() — full pipeline
+│   ├── matcher.py          # batch_match_jobs() — classify unscored jobs via LLM
+│   ├── orchestrator.py     # process_job_for_user() — full pipeline
+│   ├── rendercv_renderer.py  # build_yaml_dict() + render() — PDF generation via rendercv
+│   ├── document_generator.py  # DOCX cover letter output (python-docx)
+│   └── utils.py            # safe_filename(), unique_path() — shared helpers
 ├── core/
 │   ├── database.py         # SQLAlchemy models + CRUD + vector search helpers
 │   └── __init__.py
@@ -130,8 +130,10 @@ python scripts/seed_prompts.py
 
 ```
 DB_CONN_URI=postgresql://postgres:YOUR_PASSWORD@localhost:5432/ai_assistant
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4
+LLM_PROVIDER=openrouter                       # "openrouter" or "gemini"
+OPENROUTER_API_KEY=sk-or-...                  # required for openrouter
+GEMINI_API_KEY=...                            # required for gemini
+LLM_MODEL=openai/gpt-4o                       # model for generation (matcher overrides this)
 EMBEDDING_MODEL=text-embedding-3-small
 PREFECT_API_URL=http://localhost:4200/api
 ```
@@ -164,6 +166,39 @@ scrapers ──► scraped_jobs ──► orchestator ──► LLM (per-section
 
 The child tables (`work_experience`, `education`, etc.) are **never overwritten** by the generation pipeline. Each run creates a new row in `generated_documents` linking `resume_id` (the source version) and `job_id` (the target job).
 
+## Decoupled pipeline: matcher → generator
+
+The pipeline runs in **two decoupled stages**, each with its own LLM call:
+
+1. **Batch Matcher** (`app/matcher.py::batch_match_jobs()`) — fetches unscored job postings, builds a user profile summary (skills, experience titles, education, project tech stacks), sends all jobs to the LLM in one prompt, and persists decisions to `job_matches` table. Uses a **cheap model** (`openai/gpt-4o-mini` by default).
+2. **Generator** (`app/orchestrator.py::process_job_for_user()`) — runs only for jobs where `job_matches.status == 'matched'`. Generates the ATS-optimised resume + cover letter using the **main model** (`LLM_MODEL`).
+
+This avoids wasting the expensive model on irrelevant jobs.
+
+### Flow parameters (Prefect UI)
+
+When you view the deployment at http://localhost:4200 or start a manual flow run,
+you can set:
+
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `match_model` | `openai/gpt-4o-mini` | Model for batch matching |
+| `match_provider` | *(→ LLM_PROVIDER)* | Provider for matching (`openrouter` / `gemini`) |
+| `generate_model` | *(→ LLM_MODEL)* | Model for resume + cover letter |
+| `generate_provider` | *(→ LLM_PROVIDER)* | Provider for generation |
+| `match_limit` | 50 | Max jobs to score per run |
+| `job_limit` | 10 | Max matched jobs to process |
+
+### Provider override per stage
+
+Each stage can target a different provider and model. Examples:
+
+| Scenario | `match_provider` | `match_model` | `generate_provider` | `generate_model` |
+|----------|-----------------|----------------|--------------------|------------------|
+| Default | *(→ LLM_PROVIDER)* | `openai/gpt-4o-mini` | *(→ LLM_PROVIDER)* | *(→ LLM_MODEL)* |
+| Match via Gemini, generate via OpenRouter GPT-4o | `gemini` | `gemini-2.0-flash` | `openrouter` | `openai/gpt-4o` |
+| All via OpenRouter custom models | *(→ openrouter)* | `anthropic/claude-3-haiku` | *(→ openrouter)* | `openai/gpt-4o` |
+
 ## Usage
 
 ### Run scrapers (standalone)
@@ -182,7 +217,12 @@ See `scrapers/README.md` for detailed scraper docs.
 ```bash
 python -c "
 from app.orchestrator import process_job_for_user
-docs = process_job_for_user(user_id='YOUR_USER_UUID', job_id=123)
+docs = process_job_for_user(
+    user_id='YOUR_USER_UUID',
+    job_id=123,
+    model='openai/gpt-4o',          # optional: override LLM model
+    provider='openrouter',          # optional: 'openrouter' or 'gemini'
+)
 print(f'Generated {len(docs)} documents')
 "
 ```
@@ -248,7 +288,7 @@ python -m prefect_flows.job_pipeline --manual <user_id> <job_id>
 ```python
 from app.config import settings
 settings = settings.from_prefect()  # reads Prefect blocks first, falls back to .env
-print(settings.OPENAI_API_KEY)      # from Prefect block or .env
+print(settings.OPENROUTER_API_KEY)  # from Prefect block or .env
 ```
 
 ### What to do with `.env`
@@ -296,8 +336,8 @@ data/
 
 | Module | What it does |
 |--------|-------------|
-| `core.database` | SQLAlchemy ORM models, `insert_jobs()`, vector search, prompt CRUD |
-| `app.llm` | `generate_text()` + `generate_embedding()` — OpenAI |
+| `core.database` | SQLAlchemy ORM models, `insert_jobs()`, vector search, prompt CRUD, `job_matches` CRUD |
+| `app.llm` | `generate_text()` + `generate_embedding()` — routes through OpenRouter or Gemini via OpenAI SDK |
 | `app.rag` | `assemble_user_profile()` + `find_relevant_jobs()` — retrieval |
 | `app.rendercv_renderer` | `build_yaml_dict()` + `render()` — YAML assembly + PDF generation |
 | `app.orchestrator` | `process_job_for_user()` — full pipeline (RAG → LLM → YAML → PDF → snapshot) |

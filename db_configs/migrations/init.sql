@@ -135,7 +135,8 @@ CREATE TABLE IF NOT EXISTS scraped_jobs (
     expires         DATE,
     category        TEXT,
     remote          TEXT,
-    scraped_at      TIMESTAMP WITH TIME ZONE DEFAULT timezone('Africa/Harare', CURRENT_TIMESTAMP)
+    scraped_at          TIMESTAMP WITH TIME ZONE DEFAULT timezone('Africa/Harare', CURRENT_TIMESTAMP),
+    apply_instructions  TEXT
 );
 
 -- Migration: add columns that may not exist in older versions of this table

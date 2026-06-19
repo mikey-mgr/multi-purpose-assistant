@@ -19,6 +19,7 @@ from typing import Any
 import yaml
 
 from app.config import settings
+from app.utils import unique_path
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,6 @@ def build_yaml_dict(
     cv: dict[str, Any] = {
         "cv": {
             "name": name,
-            "headline": overrides.get("summary", resume.get("professional_summary", "")),
             "location": location or None,
             "email": user.get("email"),
             "phone": user.get("phone_1") or user.get("phone_2"),
@@ -78,11 +78,12 @@ def build_yaml_dict(
         }
     }
 
-    # ── Professional Summary (custom section for the full text) ─────
-    sections: dict[str, list] = {}
     summary_text = overrides.get("summary", resume.get("professional_summary"))
     if summary_text:
+        sections: dict[str, list] = {}
         sections["Professional Summary"] = [summary_text]
+    else:
+        sections = {}
 
     # ── Skills ──────────────────────────────────────────────────────
     skills_override = overrides.get("skills")
@@ -114,10 +115,12 @@ def build_yaml_dict(
         highlights = []
         if edu.get("grade_or_class"):
             highlights.append(f"Grade: {edu['grade_or_class']}")
+        degree = edu.get("degree_type", "")
+        field = edu.get("field_of_study", "")
+        area = f"{degree} in {field}" if degree and field else (degree or field)
         edu_list.append({
             "institution": edu.get("institution_name"),
-            "area": edu.get("field_of_study"),
-            "degree": edu.get("degree_type"),
+            "area": area,
             "start_date": _fmt_date(edu.get("start_date")),
             "end_date": _fmt_date(edu.get("end_date")),
             "highlights": highlights or None,
@@ -142,6 +145,9 @@ def build_yaml_dict(
     for proj in projects:
         pname = proj.get("project_name", "")
         highlights = proj_overrides.get(pname, proj.get("bullet_points", []))
+        purl = proj.get("project_url")
+        if purl:
+            pname = f"{pname} (Link)"
         proj_list.append({
             "name": pname,
             "location": None,
@@ -179,19 +185,20 @@ def write_yaml(cv_dict: dict, output_path: str) -> str:
 
 def render(
     cv_dict: dict,
+    job_title: str = "",
     output_dir: str | None = None,
 ) -> str:
     """
-    Write YAML, call `rendercv render`, return path to generated PDF.
+    Write YAML, call ``rendercv render``, return path to generated PDF.
 
-    The PDF lands in data/rendercv_output/<name>_cv.pdf.
+    The PDF lands in ``data/rendercv_output/Name Surname CV - Job Title.pdf``.
+    If a file with that name exists, a counter is appended before the extension.
     """
     if output_dir is None:
         output_dir = os.path.join(settings.OUTPUT_DIR, "rendercv_output")
     os.makedirs(output_dir, exist_ok=True)
 
     name = cv_dict["cv"]["name"]
-    name_slug = slugify(name)
 
     # Write YAML to temp location, then copy to output dir
     with tempfile.NamedTemporaryFile(
@@ -201,7 +208,7 @@ def render(
         yaml.dump(cv_dict, tmp, allow_unicode=True, sort_keys=False)
 
     try:
-        # rendercv always writes to a subfolder named after the YAML's stem
+        # rendercv writes to a subfolder named after the YAML's stem
         stem = Path(yaml_path).stem
         rendercv_out = Path(yaml_path).parent / stem
 
@@ -213,33 +220,27 @@ def render(
             timeout=120,
         )
         if result.returncode != 0:
-            # rendercv sometimes exits 1 due to Unicode console issues on
-            # Windows even when the PDF was generated successfully — treat
-            # the PDF's existence as the real signal.
             logger.warning("rendercv exited %d (may be a false positive)", result.returncode)
 
-        # Copy PDF to our output dir
-        pdf_name = f"{name_slug}_cv.pdf"
-        src_pdf = rendercv_out / pdf_name
-        if src_pdf.exists():
-            dst_pdf = os.path.join(output_dir, pdf_name)
-            import shutil
-            shutil.copy2(str(src_pdf), dst_pdf)
-            logger.info("PDF written to %s", dst_pdf)
-        else:
-            # Try the stem name rendercv generates
-            src_pdf = rendercv_out / f"{stem}_cv.pdf"
-            if src_pdf.exists():
-                dst_pdf = os.path.join(output_dir, pdf_name)
-                import shutil
-                shutil.copy2(str(src_pdf), dst_pdf)
-                logger.info("PDF written to %s", dst_pdf)
-            else:
-                logger.warning("PDF not found in rendercv output; check stderr:\n%s", result.stderr)
-                return ""
+        # rendercv generates <stem>_cv.pdf — find *any* PDF in the output
+        pdf_files = list(rendercv_out.glob("*.pdf")) if rendercv_out.is_dir() else []
+        if not pdf_files:
+            logger.warning("No PDF found in rendercv output; check stderr:\n%s", result.stderr)
+            return ""
 
-        # Also save a copy of the source YAML
-        yaml_dst = os.path.join(output_dir, f"{name_slug}_cv.yaml")
+        src_pdf = str(pdf_files[0])
+        logger.info("Found rendercv PDF: %s", src_pdf)
+
+        # Copy to final location with dedup filename
+        cv_basename = f"{name} CV - {job_title}" if job_title else f"{name} CV"
+        dst_pdf = unique_path(output_dir, cv_basename, ".pdf")
+        import shutil
+        shutil.copy2(src_pdf, dst_pdf)
+        logger.info("PDF written to %s", dst_pdf)
+
+        # Also save a copy of the source YAML with the same dedup name
+        yaml_basename = f"{name} CV - {job_title}" if job_title else f"{name} CV"
+        yaml_dst = unique_path(output_dir, yaml_basename, ".yaml")
         shutil.copy2(yaml_path, yaml_dst)
 
         return dst_pdf

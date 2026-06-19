@@ -143,7 +143,12 @@ def _parse_response(raw: str, jobs: list[ScrapedJob]) -> list[dict]:
     return decisions
 
 
-def batch_match_jobs(user_id: str, limit: int = 50) -> list[dict]:
+def batch_match_jobs(
+    user_id: str,
+    limit: int = 50,
+    model: str = "openai/gpt-4o-mini",
+    provider: str | None = None,
+) -> list[dict]:
     """
     Main entry point.
 
@@ -154,20 +159,34 @@ def batch_match_jobs(user_id: str, limit: int = 50) -> list[dict]:
 
     Returns the list of match decisions that were inserted.
     """
+    logger.info("Building user profile summary for %s ...", user_id)
     profile = _build_user_summary(user_id)
     if not profile:
         logger.warning("No active resume found for user %s", user_id)
         return []
+
+    logger.info(
+        "Profile: %d skills, %d work titles, %d education entries, %d project techs",
+        len(profile.get("technical_skills", [])),
+        len(profile.get("work_experience_titles", [])),
+        len(profile.get("education", [])),
+        len(profile.get("project_technologies", [])),
+    )
 
     jobs = get_unscored_jobs(user_id, limit=limit)
     if not jobs:
         logger.info("No unscored jobs for user %s", user_id)
         return []
 
+    logger.info("Fetched %d unscored jobs (limit=%d)", len(jobs), limit)
+
     prompt_text = _build_prompt(profile, jobs)
+    logger.info("Sending %d jobs to LLM for batch classification ...", len(jobs))
 
     result = generate_text(
         "job_matcher_v1",
+        model=model,
+        provider=provider,
         batch_input=prompt_text,
     )
     raw = result.get("content", "")

@@ -27,7 +27,7 @@ the pinned versions. Install packages individually.
 | Terminal | Command | Purpose |
 |----------|---------|---------|
 | 1 | `prefect server start` | API server + UI at :4200 |
-| 2 | `python -m prefect_flows.deployment` | Registers cron + runs scheduler |
+| 2 | `python -m prefect_flows.deployment` | Registers **4 deployments** + runs scheduler |
 | 3 | Free | Manual triggers |
 
 If you stop Terminal 1 or 2, restart them in order (server first).
@@ -64,12 +64,116 @@ Empty env vars are skipped (existing blocks keep their value).
 
 Block names used:
 - `app-config-db-conn-uri`
-- `app-config-openai-api-key`
 - `app-config-openrouter-api-key`
 - `app-config-gemini-api-key`
+- `app-config-llm-provider`      — "openrouter" or "gemini"
+- `app-config-llm-model`         — default model for generation (e.g. "openai/gpt-4o")
 - `app-config-serpapi-api-key`
 - `app-config-gmail-address`
 - `app-config-gmail-app-password`
+
+## Provider architecture (`app/llm.py`)
+
+The pipeline has **two inference providers**, each with their own API key + base URL:
+
+| Provider | Setting | API base URL |
+|----------|---------|--------------|
+| `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
+| `gemini` | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai/` |
+
+Both are called through the **OpenAI Python SDK** (same `client.chat.completions.create` interface) — only the `base_url` and `api_key` differ. This is handled in `_get_client(provider)`.
+
+The default provider is set by `LLM_PROVIDER` (`.env` or Prefect block `app-config-llm-provider`). You can **override per pipeline stage** via flow parameters.
+
+### Deployments available in the UI
+
+Visit http://localhost:4200/deployments after starting `deployment.py`:
+
+| Deployment | Flow | Cron | Purpose |
+|-----------|------|------|---------|
+| `scraper-only` | `scrape-and-store` | `0 */6 * * *` | Scrape job boards |
+| `matcher-only` | `match-jobs` | — *(manual)* | Batch-classify unscored jobs |
+| `generator-only` | `generate-matched` | — *(manual)* | Generate docs for matched jobs |
+| `job-pipeline` | `pull-and-process-jobs` | `0 */6 * * *` | Scrape → match → generate |
+
+### Default parameters (set in `deployment.py`)
+
+```json
+{
+  "user_id": "ff0465b9-...",
+  "match_model": "openai/gpt-oss-120b:free",
+  "generate_model": "models/gemini-3.1-flash-lite",
+  "match_provider": "openrouter",
+  "generate_provider": "gemini",
+  "match_limit": 50,
+  "job_limit": 10
+}
+```
+
+Override any of these per run via the Prefect UI or CLI.
+
+### Flow parameters explained
+
+| Parameter | Applies to | Meaning |
+|-----------|-----------|---------|
+| `match_model` | matcher | LLM model for batch classification (should be cheap) |
+| `match_provider` | matcher | `"openrouter"` or `"gemini"` — which API to route through |
+| `generate_model` | generator | LLM model for resume + cover letter |
+| `generate_provider` | generator | API route for generation |
+| `match_limit` | matcher | Max **unscored** jobs to evaluate this run |
+| `job_limit` | generator | Max **matched-but-unprocessed** jobs to generate for (not a scrape limit) |
+| `scrape_first` | full pipeline | Whether to run scrapers before matching (`True`/`False`) |
+
+**`job_limit`** controls how many matched jobs the generator processes per run.
+Scraping has its own limit: [`max_pages` in scrapers/unified_scraper.py](../
+scrapers/unified_scraper.py).
+
+### Run a single stage in isolation
+
+From the Prefect UI, click **Run** on any deployment, set only the params
+you care about, and it runs independently.  For example:
+- **Just re-match** existing unscored jobs → run `matcher-only`
+- **Just regenerate** documents for already-matched jobs → run `generator-only`
+
+### Test the Python modules directly (no Prefect server needed)
+
+All `app.*` and `core.*` modules work without Prefect. Secrets fall back to
+`.env` when the Prefect server is unreachable:
+
+```bash
+# Test matching a batch of jobs
+python -c "
+from app.matcher import batch_match_jobs
+decisions = batch_match_jobs(
+    user_id='ff0465b9-...',
+    limit=5,
+    model='openai/gpt-oss-120b:free',
+    provider='openrouter',
+)
+print(f'Matched: {sum(1 for d in decisions if d[\"status\"]==\"matched\")}/{len(decisions)}')
+"
+
+# Test generation for a specific job
+python -c "
+from app.orchestrator import process_job_for_user
+docs = process_job_for_user(
+    user_id='ff0465b9-...',
+    job_id=123,
+    provider='gemini',
+    model='models/gemini-3.1-flash-lite',
+)
+"
+
+# Test scrapers
+python -m scrapers.unified_scraper
+```
+
+### Override models per run via CLI
+
+```bash
+prefect deployment run 'pull-and-process-jobs/job-pipeline' \
+  -p '{"match_provider": "gemini", "match_model": "gemini-2.0-flash"}'
+```
 
 ## Typst (PDF rendering)
 
@@ -122,18 +226,6 @@ Ctrl+C, then:
 python -m prefect_flows.deployment
 ```
 
-## Manual trigger
-
-```bash
-conda activate prefect_env
-python -m prefect_flows.job_pipeline --manual <user_id> <job_id>
-```
-
-Or via Prefect CLI:
-```bash
-prefect deployment run 'pull-and-process-jobs/job-pipeline'
-```
-
 The scheduled run uses the `parameters` from the deployment definition
-(currently set in `deployment.py`). To change the default user_id, edit
+(currently set in `deployment.py`). To change defaults, edit
 `deployment.py` and restart the runner.

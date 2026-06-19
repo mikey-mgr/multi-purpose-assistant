@@ -12,7 +12,6 @@ Pipeline:
 
 import json
 import logging
-from datetime import datetime
 
 from core.database import (
     get_session,
@@ -27,8 +26,9 @@ from app.rag import (
     find_relevant_jobs,
     _fetch_profile_with_pydantic,
 )
-from app.rendercv_renderer import build_yaml_dict, render as rendercv_render, write_yaml
+from app.rendercv_renderer import build_yaml_dict, render as rendercv_render
 from app.document_generator import ensure_output_dir, cover_letter_to_docx
+from app.utils import unique_path
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,8 @@ def process_job_for_user(
     user_id: str,
     job_id: int | None = None,
     resume_id: str | None = None,
+    model: str | None = None,
+    provider: str | None = None,
 ) -> list[GDocSchema]:
     """
     Full pipeline for one user + one job.
@@ -59,6 +61,8 @@ def process_job_for_user(
         logger.info("Generating ATS resume sections ...")
         resume_result = generate_text(
             "ats_resume_v1",
+            model=model,
+            provider=provider,
             user_profile=profile_str,
             job_description=job_desc_str,
         )
@@ -66,6 +70,9 @@ def process_job_for_user(
 
         llm_raw = resume_result.get("content", "")
         llm_overrides = _parse_llm_output(llm_raw)
+
+        user_name = f"{profile_data['user'].get('first_name', '')} {profile_data['user'].get('last_name', '')}".strip()
+        job_title = _fetch_job_title(job_id) or ""
 
         # ── 4. Build RenderCV YAML ──────────────────────────────────
         cv_dict = build_yaml_dict(
@@ -81,7 +88,9 @@ def process_job_for_user(
         cv_yaml_str = json.dumps(cv_dict, indent=2)
 
         # ── 5. Render PDF ───────────────────────────────────────────
-        pdf_path = rendercv_render(cv_dict)
+        pdf_path = rendercv_render(cv_dict, job_title=job_title)
+        if not pdf_path:
+            logger.warning("PDF was NOT generated for job %s — resume snapshot saved without file.", job_id)
 
         # ── 6. Snapshot resume in DB ────────────────────────────────
         resume_doc = save_generated_document(
@@ -91,7 +100,7 @@ def process_job_for_user(
             document_type="resume",
             rendercv_yaml=cv_yaml_str,
             content=llm_raw,
-            pdf_path=pdf_path,
+            pdf_path=pdf_path or None,
             prompt_name="ats_resume_v1",
             model=resume_result.get("model", ""),
             tokens_used=resume_result.get("tokens_used", 0),
@@ -105,20 +114,20 @@ def process_job_for_user(
             model=resume_result.get("model", ""),
             tokens_used=resume_result.get("tokens_used", 0),
         ))
-        logger.info("Resume snapshot saved (id=%s, pdf=%s)", resume_doc.id, pdf_path)
+        logger.info("Resume snapshot saved (id=%s, pdf=%s)", resume_doc.id, pdf_path or "(none)")
 
         # ── 7. Generate cover letter ────────────────────────────────
         logger.info("Generating cover letter ...")
         cl_result = generate_text(
             "cover_letter_v1",
+            model=model,
+            provider=provider,
             user_profile=profile_str,
             job_description=job_desc_str,
         )
         out_dir = ensure_output_dir("cover_letters")
-        docx_path = (
-            f"{out_dir}/cover_letter_{job_id or 'general'}"
-            f"_{datetime.now():%Y%m%d_%H%M}.docx"
-        )
+        cl_basename = f"{user_name} Cover Letter - {job_title}" if job_title else f"{user_name} Cover Letter"
+        docx_path = unique_path(out_dir, cl_basename, ".docx")
         cover_letter_to_docx(cl_result["content"], docx_path)
 
         cl_doc = save_generated_document(
@@ -151,6 +160,18 @@ def process_job_for_user(
 
     logger.info("Pipeline complete — %d document(s).", len(results))
     return results
+
+
+def _fetch_job_title(job_id: int | None) -> str | None:
+    """Fetch the title of a job from the DB."""
+    if not job_id:
+        return None
+    session = get_session()
+    try:
+        job = session.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+        return job.title if job else None
+    finally:
+        session.close()
 
 
 def _load_job_description(job_id: int | None, profile) -> str:

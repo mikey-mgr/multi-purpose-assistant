@@ -13,9 +13,8 @@ from urllib.parse import urljoin, urlparse
 from datetime import datetime, timedelta
 import logging
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 class VacancyMailScraper:
     def __init__(self):
@@ -26,7 +25,7 @@ class VacancyMailScraper:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
         
-    def scrape_jobs(self, max_pages=2, delay=None, max_jobs=None):
+    def scrape_jobs(self, max_pages=2, delay=None, max_jobs=None, existing_urls: set | None = None):
         """
         Scrape jobs from vacancymail.co.zw
         
@@ -34,14 +33,17 @@ class VacancyMailScraper:
             max_pages (int): Maximum number of pages to scrape
             delay (int): Delay between requests in seconds
             max_jobs (int): Maximum number of jobs to scrape. If None, all available jobs up to max_pages will be scraped.
+            existing_urls (set): Set of job URLs already in the DB – detail pages for these will be skipped.
             
         Returns:
             list: A list of dictionaries, each representing a job listing, standardized for the backend.
         """
         if delay is None:
             delay = random.randint(5, 15)
+        existing_urls = existing_urls or set()
 
         all_jobs = []
+        skipped = 0
         
         for page in range(1, max_pages + 1):
             # Stop if we've reached the maximum desired jobs
@@ -79,19 +81,15 @@ class VacancyMailScraper:
                 try:
                     job_data = self._extract_listing_data(job_link)
                     if job_data:
-                        # Get detailed job information
                         job_url = urljoin(self.base_url, job_link.get('href'))
-                        detailed_data = self._scrape_job_details(job_url)
-                        
-                        # Merge data
-                        job_data.update(detailed_data)
-                        
-                        # Standardize and add to all_jobs
-                        standardized_job = self._standardize_job_data(job_data)
-                        all_jobs.append(standardized_job)
-                        
-                        # Respectful delay
-                        time.sleep(delay)
+                        if job_url in existing_urls:
+                            skipped += 1
+                        else:
+                            detailed_data = self._scrape_job_details(job_url)
+                            job_data.update(detailed_data)
+                            standardized_job = self._standardize_job_data(job_data)
+                            all_jobs.append(standardized_job)
+                            time.sleep(delay)
                         
                 except Exception as e:
                     logger.error(f"Error processing job listing: {e}")
@@ -100,7 +98,7 @@ class VacancyMailScraper:
             # Delay between pages
             time.sleep(delay)
             
-        logger.info(f"Total jobs scraped: {len(all_jobs)}")
+        logger.info(f"Total jobs scraped: {len(all_jobs)} (skipped %d existing)", skipped)
         
         return all_jobs
     
@@ -240,7 +238,19 @@ class VacancyMailScraper:
                         relevant_description_parts.append(f"{h3.get_text(strip=True)}:\n" + "\n".join(section_content))
             
             data['description'] = "\n\n".join(relevant_description_parts) if relevant_description_parts else None
-            
+
+            # ── Extract "How to Apply" section ───────────────────────
+            # Always inside a <div class="single-page-section"> whose <h3>
+            # contains "How to Apply". Get all text after the h3 within that div.
+            for section in soup.find_all('div', class_='single-page-section'):
+                h3 = section.find('h3')
+                if h3 and re.search(r'How\s*to\s*Apply', h3.get_text(), re.IGNORECASE):
+                    parts = []
+                    for node in h3.find_next_siblings():
+                        parts.append(node.get_text(separator='\n', strip=True))
+                    data['apply_instructions'] = '\n'.join(filter(None, parts))
+                    break
+
             # Get category from header
             header = soup.find('div', class_='header-details')
             if header:
@@ -320,7 +330,8 @@ class VacancyMailScraper:
             'date_posted': job_data.get('date_posted_detailed') or job_data.get('date_posted') or None,
             'expires': job_data.get('expiry_detailed') or job_data.get('expires') or None,
             'category': job_data.get('category') or None,
-            'remote': None # Assuming no explicit remote status for now
+            'remote': None,
+            'apply_instructions': job_data.get('apply_instructions') or None,
         }
         return standardized
 
