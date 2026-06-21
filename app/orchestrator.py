@@ -4,27 +4,27 @@ Core orchestration logic — called by Prefect flows (or CLI / API).
 Pipeline:
   1. Fetch an unprocessed job posting
   2. Assemble the user's profile (RAG) — raw data from normalized tables
-  3. Call LLM to rewrite per-section content for ATS fit
+  3. Single LLM call for both ATS-optimised resume JSON + cover letter
   4. Build RenderCV YAML from DB data + LLM overrides
-  5. Render PDF via rendercv, save DOCX for cover letter
-  6. Snapshot everything in generated_documents table
-
-Post-generation agentic step:
-  7. Parse apply_instructions → decide email / external_link / unknown
-  8. Send email with attached docs, OR send WhatsApp notification
-  9. Update job_matches.status → 'applied'
+  5. Render PDF via rendercv with retry, save DOCX for cover letter with retry
+  6. Snapshot both in generated_documents table
 """
 
 import json
 import logging
+import os
+import time
 
 from core.database import (
     get_session,
     ScrapedJob,
-    GeneratedDocument,
     save_generated_document,
     update_job_match_status,
     get_application_documents,
+    get_generated_jobs_with_matches,
+    save_apply_details,
+    Resume,
+    User,
 )
 from app.schemas import GeneratedDocument as GDocSchema
 from app.llm import generate_text
@@ -36,9 +36,6 @@ from app.rag import (
 from app.rendercv_renderer import build_yaml_dict, render as rendercv_render
 from app.document_generator import ensure_output_dir, cover_letter_to_docx
 from app.utils import unique_path
-from app.apply_agent import parse_apply_instructions
-from app.email_sender import send_email
-from app.whatsapp_notifier import send_whatsapp
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +46,15 @@ def process_job_for_user(
     resume_id: str | None = None,
     model: str | None = None,
     provider: str | None = None,
+    fallback_model: str | None = None,
+    fallback_provider: str | None = None,
 ) -> list[GDocSchema]:
     """
     Full pipeline for one user + one job.
+
+    Makes a single LLM call that returns both resume JSON and cover letter text,
+    then renders both files with retries.
+
     Returns list of GDocSchema describing what was generated.
     """
     session = get_session()
@@ -64,22 +67,30 @@ def process_job_for_user(
         profile = profile_data["profile"]
         profile_str = profile.model_dump_json(indent=2)
 
-        # ── 2. Load job description ─────────────────────────────────
+        # ── 2. Load job description (includes apply_instructions) ───
         job_desc_str = _load_job_description(job_id, profile)
 
-        # ── 3. Generate ATS-optimised resume ────────────────────────
-        logger.info("Generating ATS resume sections ...")
-        resume_result = generate_text(
-            "ats_resume_v1",
-            model=model,
-            provider=provider,
-            user_profile=profile_str,
-            job_description=job_desc_str,
+        # ── 3. Single LLM call — resume + cover letter ──────────────
+        combined_result = _generate_combined_with_fallback(
+            prompt_name="ats_and_cover_v1",
+            variables={
+                "user_profile": profile_str,
+                "job_description": job_desc_str,
+            },
+            primary_model=model,
+            primary_provider=provider,
+            fallback_model=fallback_model,
+            fallback_provider=fallback_provider,
+            max_attempts=3,
         )
+        if combined_result is None:
+            logger.error("All attempts failed for job %s — skipping.", job_id)
+            return []
 
-
-        llm_raw = resume_result.get("content", "")
-        llm_overrides = _parse_llm_output(llm_raw)
+        combined, llm_model_used = combined_result
+        llm_raw = json.dumps(combined, indent=2)
+        resume_overrides = combined.get("resume", {})
+        cover_letter_text = combined.get("cover_letter")
 
         user_name = f"{profile_data['user'].get('first_name', '')} {profile_data['user'].get('last_name', '')}".strip()
         job_title = _fetch_job_title(job_id) or ""
@@ -93,14 +104,12 @@ def process_job_for_user(
             certifications=profile_data["certifications"],
             projects=profile_data["projects"],
             skills=profile_data["skills"],
-            llm_section_overrides=llm_overrides,
+            llm_section_overrides=resume_overrides,
         )
         cv_yaml_str = json.dumps(cv_dict, indent=2)
 
-        # ── 5. Render PDF ───────────────────────────────────────────
-        pdf_path = rendercv_render(cv_dict, job_title=job_title)
-        if not pdf_path:
-            logger.warning("PDF was NOT generated for job %s — resume snapshot saved without file.", job_id)
+        # ── 5. Render PDF with retry ────────────────────────────────
+        pdf_path = _render_pdf_with_retry(cv_dict, job_title, job_id)
 
         # ── 6. Snapshot resume in DB ────────────────────────────────
         resume_doc = save_generated_document(
@@ -111,56 +120,68 @@ def process_job_for_user(
             rendercv_yaml=cv_yaml_str,
             content=llm_raw,
             pdf_path=pdf_path or None,
-            prompt_name="ats_resume_v1",
-            model=resume_result.get("model", ""),
-            tokens_used=resume_result.get("tokens_used", 0),
+            prompt_name="ats_and_cover_v1",
+            model=llm_model_used,
+            tokens_used=0,
         )
         session.commit()
         results.append(GDocSchema(
             job_id=job_id,
-            prompt_name="ats_resume_v1",
+            prompt_name="ats_and_cover_v1",
             document_type="resume",
             content=llm_raw,
-            model=resume_result.get("model", ""),
-            tokens_used=resume_result.get("tokens_used", 0),
+            model=llm_model_used,
+            tokens_used=0,
         ))
         logger.info("Resume snapshot saved (id=%s, pdf=%s)", resume_doc.id, pdf_path or "(none)")
 
-        # ── 7. Generate cover letter ────────────────────────────────
-        logger.info("Generating cover letter ...")
-        cl_result = generate_text(
-            "cover_letter_v1",
-            model=model,
-            provider=provider,
-            user_profile=profile_str,
-            job_description=job_desc_str,
-        )
-        out_dir = ensure_output_dir("cover_letters")
-        cl_basename = f"{user_name} Cover Letter - {job_title}" if job_title else f"{user_name} Cover Letter"
-        docx_path = unique_path(out_dir, cl_basename, ".docx")
-        cover_letter_to_docx(cl_result["content"], docx_path)
+        # ── 7. Save cover letter (if generated) ─────────────────────
+        if cover_letter_text and cover_letter_text.strip():
+            docx_path = _save_cover_letter_with_retry(
+                cover_letter_text, user_name, job_title, job_id
+            )
+            cl_doc = save_generated_document(
+                session,
+                resume_id=profile_data["resume"]["id"],
+                job_id=job_id,
+                document_type="cover_letter",
+                content=cover_letter_text,
+                docx_path=docx_path,
+                prompt_name="ats_and_cover_v1",
+                model=llm_model_used,
+                tokens_used=0,
+            )
+            session.commit()
+            results.append(GDocSchema(
+                job_id=job_id,
+                prompt_name="ats_and_cover_v1",
+                document_type="cover_letter",
+                content=cover_letter_text,
+                model=llm_model_used,
+                tokens_used=0,
+            ))
+            logger.info("Cover letter snapshot saved (id=%s, docx=%s)", cl_doc.id, docx_path or "(none)")
+        else:
+            logger.info("Cover letter skipped for job %s (LLM returned null).", job_id)
 
-        cl_doc = save_generated_document(
-            session,
-            resume_id=profile_data["resume"]["id"],
-            job_id=job_id,
-            document_type="cover_letter",
-            content=cl_result["content"],
-            docx_path=docx_path,
-            prompt_name="cover_letter_v1",
-            model=cl_result.get("model", ""),
-            tokens_used=cl_result.get("tokens_used", 0),
-        )
-        session.commit()
-        results.append(GDocSchema(
-            job_id=job_id,
-            prompt_name="cover_letter_v1",
-            document_type="cover_letter",
-            content=cl_result["content"],
-            model=cl_result.get("model", ""),
-            tokens_used=cl_result.get("tokens_used", 0),
-        ))
-        logger.info("Cover letter snapshot saved (id=%s, docx=%s)", cl_doc.id, docx_path)
+        # ── 8. Save apply_details + reason to job_matches ─────────────
+        apply_details = combined.get("apply_details") or {}
+        missing_resources = combined.get("missing_resources") or ""
+        if apply_details or missing_resources:
+            from core.database import save_apply_details
+            save_apply_details(
+                job_id=job_id,
+                user_id=user_id,
+                apply_action=apply_details.get("action"),
+                apply_recipient=apply_details.get("recipient"),
+                apply_subject=apply_details.get("subject"),
+                apply_body=apply_details.get("body"),
+                apply_url=apply_details.get("url"),
+                required_docs=apply_details.get("required_docs"),
+                reason=missing_resources,
+                proceed=apply_details.get("proceed"),
+            )
+            logger.info("Apply details saved for job %s.", job_id)
 
     except Exception:
         session.rollback()
@@ -170,6 +191,134 @@ def process_job_for_user(
 
     logger.info("Pipeline complete — %d document(s).", len(results))
     return results
+
+
+# ── Private helpers ─────────────────────────────────────────────────
+
+
+def _generate_combined_with_fallback(
+    prompt_name: str,
+    variables: dict,
+    primary_model: str | None,
+    primary_provider: str | None,
+    fallback_model: str | None,
+    fallback_provider: str | None,
+    max_attempts: int = 3,
+) -> tuple[dict, str] | None:
+    """
+    Call the LLM for the combined prompt, retrying with fallback on failure.
+
+    Attempt 1 uses primary model/provider.
+    Attempts 2+ use fallback model/provider.
+
+    Returns (parsed_json, model_name) or None if all attempts fail.
+    """
+    last_error = None
+    for attempt in range(max_attempts):
+        try:
+            if attempt % 2 == 0:
+                m, p = primary_model, primary_provider
+                tag = "primary"
+            else:
+                m, p = fallback_model, fallback_provider
+                tag = f"fallback (attempt {attempt + 1})"
+
+            logger.info(
+                "Combined LLM call attempt %d/%d [%s]: model=%s provider=%s",
+                attempt + 1, max_attempts, tag, m, p,
+            )
+
+            result = generate_text(
+                prompt_name,
+                model=m,
+                provider=p,
+                **variables,
+            )
+            raw = result.get("content", "")
+            if not raw:
+                logger.warning("Attempt %d returned empty content.", attempt + 1)
+                continue
+
+            parsed = _parse_combined_output(raw)
+            if parsed and "resume" in parsed:
+                return parsed, result.get("model", m or "unknown")
+
+            logger.warning(
+                "Attempt %d output not valid combined JSON — will retry.",
+                attempt + 1,
+            )
+
+        except Exception as e:
+            last_error = e
+            logger.warning("Attempt %d failed with exception: %s", attempt + 1, e)
+
+        if attempt < max_attempts - 1:
+            time.sleep(2)
+
+    logger.error(
+        "All %d attempts failed for prompt '%s': %s",
+        max_attempts, prompt_name, last_error or "invalid output",
+    )
+    return None
+
+
+def _parse_combined_output(raw: str) -> dict | None:
+    """Parse the combined resume + cover letter JSON from the LLM."""
+    if "```json" in raw:
+        raw = raw.split("```json")[1].split("```")[0].strip()
+    elif "```" in raw:
+        raw = raw.split("```")[1].split("```")[0].strip()
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict) and "resume" in parsed:
+            return parsed
+    except (json.JSONDecodeError, IndexError):
+        pass
+    return None
+
+
+def _render_pdf_with_retry(
+    cv_dict: dict, job_title: str, job_id: int, max_attempts: int = 3
+) -> str | None:
+    """Render PDF via rendercv with retries."""
+    for attempt in range(max_attempts):
+        pdf_path = rendercv_render(cv_dict, job_title=job_title)
+        if pdf_path and os.path.exists(pdf_path):
+            return pdf_path
+        logger.warning(
+            "PDF not generated on attempt %d/%d for job %s",
+            attempt + 1, max_attempts, job_id,
+        )
+        if attempt < max_attempts - 1:
+            time.sleep(3)
+    return None
+
+
+def _save_cover_letter_with_retry(
+    cover_letter_text: str,
+    user_name: str,
+    job_title: str,
+    job_id: int,
+    max_attempts: int = 3,
+) -> str | None:
+    """Generate DOCX from cover letter text with retries."""
+    out_dir = ensure_output_dir("cover_letters")
+    cl_basename = f"{user_name} Cover Letter - {job_title}" if job_title else f"{user_name} Cover Letter"
+    docx_path = unique_path(out_dir, cl_basename, ".docx")
+
+    for attempt in range(max_attempts):
+        try:
+            cover_letter_to_docx(cover_letter_text, docx_path)
+            if os.path.exists(docx_path):
+                return docx_path
+        except Exception as e:
+            logger.warning(
+                "Cover letter DOCX failed on attempt %d/%d for job %s: %s",
+                attempt + 1, max_attempts, job_id, e,
+            )
+        if attempt < max_attempts - 1:
+            time.sleep(2)
+    return None
 
 
 def _fetch_job_title(job_id: int | None) -> str | None:
@@ -185,6 +334,7 @@ def _fetch_job_title(job_id: int | None) -> str | None:
 
 
 def _load_job_description(job_id: int | None, profile) -> str:
+    """Load job details (including apply_instructions) as a JSON string."""
     if job_id:
         session = get_session()
         try:
@@ -198,136 +348,159 @@ def _load_job_description(job_id: int | None, profile) -> str:
                 "description": job.description,
                 "location": job.location,
                 "job_type": job.job_type,
+                "apply_instructions": job.apply_instructions,
             }, indent=2)
     matches = find_relevant_jobs(profile.professional_summary or "")
     return json.dumps([m.model_dump() for m in matches], indent=2) if matches else "{}"
 
 
-def _parse_llm_output(raw: str) -> dict:
-    """
-    Try to parse the LLM output as JSON.
-    If it fails, return an empty dict (proceed with unmodified DB data).
-    Expected keys: summary, skills, experience_highlights, project_highlights.
-    """
-    # Try extracting a JSON block from markdown fences
-    if "```json" in raw:
-        raw = raw.split("```json")[1].split("```")[0].strip()
-    elif "```" in raw:
-        raw = raw.split("```")[1].split("```")[0].strip()
-
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            return parsed
-    except (json.JSONDecodeError, IndexError):
-        logger.warning("LLM output not valid JSON — using DB data as-is")
-    return {}
-
-
-def process_application(
+def batch_process_applications(
     user_id: str,
-    job_id: int,
-    resume_id: str | None = None,
+    limit: int = 10,
     model: str | None = None,
     provider: str | None = None,
-) -> dict:
+) -> list[dict]:
     """
-    Agentic step after document generation:
-    1. Read apply_instructions from the job
-    2. LLM parses them into structured action
-    3. Send email with required docs, or WhatsApp notification
-    4. Update job_matches.status → 'applied'
+    Batch-apply for all generated-but-unapplied jobs using stored apply_details.
 
-    Returns action result dict.
+    1. Loads all generated-but-unapplied jobs with match data + apply_details
+    2. Sends emails where stored apply_action = "email" and docs exist
+    3. Single LLM call to compose all WhatsApp notifications (reads reason + scores + action)
+    4. Sends WhatsApp messages
+    5. Updates statuses
     """
+    logger.info("Batch-processing applications for user %s (limit=%d)", user_id, limit)
+
+    # 1. Load jobs with match data (includes new apply_* columns via JobMatch)
+    jobs_with_matches = get_generated_jobs_with_matches(user_id, limit=limit)
+    if not jobs_with_matches:
+        logger.info("No generated-but-unapplied jobs found.")
+        return []
+
+    # 2. Load resume info for doc lookups
     session = get_session()
     try:
-        # ── 1. Load job + apply_instructions ──────────────────────────
-        job = session.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
-        if not job:
-            logger.warning("Job %s not found — skipping application step.", job_id)
-            return {"action": "error", "reason": "job_not_found"}
-
-        instructions = job.apply_instructions or ""
-        if not instructions.strip():
-            logger.info("Job %s has no apply_instructions — marking as applied.", job_id)
-            update_job_match_status(job_id, user_id, "applied")
-            return {"action": "no_instructions", "status": "applied"}
-
-        # ── 2. Find active resume ─────────────────────────────────────
-        from core.database import Resume
         resume_row = session.query(Resume).filter(
             Resume.user_id == user_id,
             Resume.is_active == True,
         ).first()
-        resume_id = str(resume_row.id) if resume_row else resume_id
-
-        # ── 3. LLM parse apply_instructions ───────────────────────────
-        parsed = parse_apply_instructions(
-            apply_instructions=instructions,
-            job_title=job.title or "",
-            company=job.company or "",
-            job_url=job.job_url or "",
-            model=model,
-            provider=provider,
-        )
-        action = parsed.get("action", "unknown")
-        logger.info(
-            "Apply agent: job=%s action=%s recipient=%s",
-            job_id, action, parsed.get("recipient"),
-        )
-
-        # ── 4. Collect required document paths ────────────────────────
-        docs = get_application_documents(resume_id, job_id) if resume_id else {}
-        attachment_paths = []
-
-        required = parsed.get("required_docs", [])
-        if "resume" in required and docs.get("resume_pdf"):
-            attachment_paths.append(docs["resume_pdf"])
-        if "cover_letter" in required and docs.get("cover_letter_docx"):
-            attachment_paths.append(docs["cover_letter_docx"])
-        if "education_cert" in required:
-            attachment_paths.extend(docs.get("education_docs", []))
-        if "certification_cert" in required:
-            attachment_paths.extend(docs.get("certification_docs", []))
-
-        # ── 5. Route by action type ───────────────────────────────────
-        if action == "email":
-            recipient = parsed.get("recipient")
-            if recipient:
-                ok = send_email(
-                    to=recipient,
-                    subject=parsed.get("subject") or f"Application: {job.title}",
-                    body=parsed.get("body") or f"Please find attached my application for {job.title}.",
-                    attachments=attachment_paths or None,
-                )
-                if ok:
-                    update_job_match_status(job_id, user_id, "applied")
-                    return {"action": "email", "recipient": recipient, "status": "applied"}
-                else:
-                    # Email failed — notify user via WhatsApp
-                    note = parsed.get("notification_text") or f"Failed to send email for {job.title} at {job.company}. Send manually."
-                    send_whatsapp(note)
-                    return {"action": "email", "recipient": recipient, "status": "failed"}
-            else:
-                logger.warning("Email action but no recipient — falling back to unknown.")
-                action = "unknown"
-
-        if action in ("external_link", "unknown"):
-            note = parsed.get("notification_text") or (
-                f"Job: {job.title} at {job.company}. "
-                f"Apply instructions: {instructions[:200]}..."
-            )
-            send_whatsapp(note)
-            update_job_match_status(job_id, user_id, "applied")
-            return {"action": action, "status": "applied"}
-
-        # ── 6. Fallback ───────────────────────────────────────────────
-        update_job_match_status(job_id, user_id, "applied")
-        return {"action": "unknown", "status": "applied"}
-
-    except Exception:
-        logger.exception("Error in process_application for job %s", job_id)
-        return {"action": "error", "reason": "exception"}
+        resolve_resume_id = str(resume_row.id) if resume_row else None
     finally:
         session.close()
+
+    if not resolve_resume_id:
+        logger.warning("No active resume found for user %s", user_id)
+        return []
+
+    # 3. Send emails where applicable, track results
+    results_map: dict[int, dict] = {}
+    email_sent_map: dict[int, bool] = {}
+
+    for item in jobs_with_matches:
+        job = item["job"]
+        match = item["match"]
+
+        action = match.apply_action or "unknown"
+        proceed = match.proceed or "apply_now"
+        recip = match.apply_recipient if action == "email" else None
+        subject = match.apply_subject or f"Application: {job.title}"
+        body = match.apply_body or f"Please find attached my application for {job.title}."
+        required_docs_raw = match.required_docs
+        required_docs = json.loads(required_docs_raw) if required_docs_raw else ["resume"]
+
+        # Determine missing docs
+        docs = get_application_documents(resolve_resume_id, job.id)
+        missing_docs = [d for d in required_docs if not _doc_available(d, docs)]
+
+        email_sent = False
+        # Only send email if: action is email, recipient exists, no missing docs, AND proceed says apply_now
+        if action == "email" and recip and not missing_docs and proceed == "apply_now":
+            attachment_paths = _build_attachment_list(required_docs, docs)
+            from app.email_sender import send_email
+            ok = send_email(
+                to=recip,
+                subject=subject,
+                body=body,
+                attachments=attachment_paths or None,
+            )
+            email_sent = ok
+            if not ok:
+                logger.warning("Email failed for job %s.", job.id)
+
+        email_sent_map[job.id] = email_sent
+        results_map[job.id] = {
+            "action": action,
+            "missing_docs": missing_docs,
+        }
+
+    # 4. Single LLM call to compose WhatsApp notifications (reads reason + scores)
+    from app.apply_agent import batch_compose_whatsapp
+    notification_texts = batch_compose_whatsapp(
+        jobs_with_matches,
+        email_sent_map,
+        results_map,
+        model=model,
+        provider=provider,
+    )
+
+    # 5. Send WhatsApp and update status
+    final_results = []
+    for item, note in zip(jobs_with_matches, notification_texts):
+        job = item["job"]
+        match = item["match"]
+        r = results_map[job.id]
+
+        if note:
+            from app.whatsapp_notifier import send_whatsapp
+            whatsapp_ok = send_whatsapp(
+                text=note,
+                score=match.score,
+                missing_docs=r["missing_docs"],
+            )
+        else:
+            whatsapp_ok = False
+
+        new_status = "waiting" if (match.proceed or "apply_now") != "apply_now" else "applied"
+        update_job_match_status(job.id, user_id, new_status)
+
+        final_results.append({
+            "job_id": job.id,
+            "action": r["action"],
+            "email_sent": email_sent_map.get(job.id, False),
+            "whatsapp_sent": whatsapp_ok,
+            "missing_docs": r["missing_docs"],
+            "status": new_status,
+        })
+
+    logger.info("Batch application complete — %d jobs processed.", len(final_results))
+    return final_results
+
+
+# ── Private helpers ────────────────────────────────────────────────
+
+
+def _doc_available(doc_type: str, docs: dict) -> bool:
+    """Check if a document type is available."""
+    if doc_type == "resume":
+        return bool(docs.get("resume_pdf"))
+    if doc_type == "cover_letter":
+        return bool(docs.get("cover_letter_docx"))
+    if doc_type == "education_cert":
+        return bool(docs.get("education_docs"))
+    if doc_type == "certification_cert":
+        return bool(docs.get("certification_docs"))
+    return False
+
+
+def _build_attachment_list(required_docs: list[str], docs: dict) -> list[str]:
+    """Build attachment file path list from required docs."""
+    paths = []
+    if "resume" in required_docs and docs.get("resume_pdf"):
+        paths.append(docs["resume_pdf"])
+    if "cover_letter" in required_docs and docs.get("cover_letter_docx"):
+        paths.append(docs["cover_letter_docx"])
+    if "education_cert" in required_docs:
+        paths.extend(docs.get("education_docs", []))
+    if "certification_cert" in required_docs:
+        paths.extend(docs.get("certification_docs", []))
+    return paths

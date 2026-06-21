@@ -10,15 +10,13 @@ Exposes five independently-deployable flows:
 """
 
 import logging
-from datetime import timedelta
 
 from prefect import flow, task, get_run_logger
-from prefect.tasks import task_input_hash
 
 from app.config import settings
 from app.matcher import batch_match_jobs
-from app.orchestrator import process_job_for_user, process_application
-from core.database import get_matched_unprocessed_jobs
+from app.orchestrator import process_job_for_user, batch_process_applications
+from core.database import get_matched_unprocessed_jobs, update_job_match_status
 from scrapers.unified_scraper import UnifiedJobScraper
 
 logger = logging.getLogger(__name__)
@@ -66,48 +64,44 @@ def match_pending_jobs(
     return len(decisions)
 
 
-@task(retries=2, retry_delay_seconds=30, cache_key_fn=task_input_hash)
+@task(retries=2, retry_delay_seconds=30)
 def fetch_matched_jobs(user_id: str, limit: int = 10) -> list:
     """Fetch matched jobs that haven't been generated yet."""
     return get_matched_unprocessed_jobs(user_id, limit=limit)
 
 
-@task(timeout_seconds=300, retries=1)
+@task(retries=2, retry_delay_seconds=30)
+def fetch_generated_jobs(user_id: str, limit: int = 10) -> list:
+    """Fetch jobs that have documents generated but not yet applied to."""
+    return get_generated_unapplied_jobs(user_id, limit=limit)
+
+
+@task
 def generate_application(
     job_id: int,
     user_id: str,
     generate_model: str | None = None,
     generate_provider: str | None = None,
+    generate_fallback_model: str | None = None,
+    generate_fallback_provider: str | None = None,
 ) -> dict:
     """Run the full generation pipeline for one matched job + user."""
     docs = process_job_for_user(
-        user_id=user_id, job_id=job_id, model=generate_model, provider=generate_provider
+        user_id=user_id,
+        job_id=job_id,
+        model=generate_model,
+        provider=generate_provider,
+        fallback_model=generate_fallback_model,
+        fallback_provider=generate_fallback_provider,
     )
+    if docs:
+        update_job_match_status(job_id, user_id, "generated")
     return {
         "job_id": job_id,
         "user_id": user_id,
         "documents": len(docs),
-        "status": "completed",
+        "status": "completed" if docs else "failed",
     }
-
-
-@task(timeout_seconds=120, retries=1)
-def apply_for_job(
-    job_id: int,
-    user_id: str,
-    resume_id: str | None = None,
-    generate_model: str | None = None,
-    generate_provider: str | None = None,
-) -> dict:
-    """Run the agentic apply step for one matched job."""
-    result = process_application(
-        user_id=user_id,
-        job_id=job_id,
-        resume_id=resume_id,
-        model=generate_model,
-        provider=generate_provider,
-    )
-    return {"job_id": job_id, "user_id": user_id, **result}
 
 
 @task
@@ -173,6 +167,8 @@ def generate_matched_flow(
     limit: int = 10,
     generate_model: str | None = None,
     generate_provider: str | None = None,
+    generate_fallback_model: str | None = None,
+    generate_fallback_provider: str | None = None,
 ):
     """
     Generate documents for matched jobs that haven't been generated yet.
@@ -186,6 +182,10 @@ def generate_matched_flow(
         Override model for resume + cover letter (None → LLM_MODEL).
     generate_provider : str | None
         Provider for generation (None → LLM_PROVIDER).
+    generate_fallback_model : str | None
+        Fallback model if primary fails.
+    generate_fallback_provider : str | None
+        Fallback provider if primary fails.
     """
     run_logger = get_run_logger()
     jobs = fetch_matched_jobs(user_id, limit=limit)
@@ -194,25 +194,18 @@ def generate_matched_flow(
         return
 
     run_logger.info("Generating documents for %d matched jobs.", len(jobs))
-    for job in jobs:
-        result = generate_application(
-            job_id=job.id,
-            user_id=user_id,
-            generate_model=generate_model,
-            generate_provider=generate_provider,
-        )
-        mark_processed(result)
-        if result.get("status") == "completed":
-            apply_result = apply_for_job(
-                job_id=job.id,
-                user_id=user_id,
-                generate_model=generate_model,
-                generate_provider=generate_provider,
-            )
-            run_logger.info(
-                "Apply agent: job=%s action=%s status=%s",
-                job.id, apply_result.get("action"), apply_result.get("status"),
-            )
+
+    results = generate_application.map(
+        job_id=[j.id for j in jobs],
+        user_id=[user_id] * len(jobs),
+        generate_model=[generate_model] * len(jobs),
+        generate_provider=[generate_provider] * len(jobs),
+        generate_fallback_model=[generate_fallback_model] * len(jobs),
+        generate_fallback_provider=[generate_fallback_provider] * len(jobs),
+    )
+
+    for r in results:
+        mark_processed(r)
 
 
 @flow(
@@ -229,7 +222,7 @@ def apply_agent_flow(
     generate_provider: str | None = None,
 ):
     """
-    Process apply_instructions for matched-but-unapplied jobs.
+    Process apply_instructions for matched-but-unapplied jobs using a single batch LLM call.
 
     Parameters
     ----------
@@ -240,22 +233,18 @@ def apply_agent_flow(
     generate_provider : str | None
     """
     run_logger = get_run_logger()
-    jobs = fetch_matched_jobs(user_id, limit=limit)
-    if not jobs:
-        run_logger.info("No matched-but-unapplied jobs found.")
-        return
-
-    run_logger.info("Processing apply instructions for %d jobs.", len(jobs))
-    for job in jobs:
-        apply_result = apply_for_job(
-            job_id=job.id,
-            user_id=user_id,
-            generate_model=generate_model,
-            generate_provider=generate_provider,
-        )
+    results = batch_process_applications(
+        user_id=user_id,
+        limit=limit,
+        model=generate_model,
+        provider=generate_provider,
+    )
+    run_logger.info("Batch apply complete — %d jobs processed.", len(results))
+    for r in results:
         run_logger.info(
-            "Apply agent: job=%s action=%s status=%s",
-            job.id, apply_result.get("action"), apply_result.get("status"),
+            "Apply agent: job=%s action=%s email=%s whatsapp=%s",
+            r.get("job_id"), r.get("action"),
+            r.get("email_sent"), r.get("whatsapp_sent"),
         )
 
 
@@ -274,12 +263,14 @@ def pull_and_process_jobs(
     generate_model: str | None = None,
     match_provider: str | None = None,
     generate_provider: str | None = None,
+    generate_fallback_model: str | None = None,
+    generate_fallback_provider: str | None = None,
+    **kwargs,
 ):
     """
-    Match unscored jobs, then generate for matched ones.
+    Match unscored jobs, generate for matched ones, then apply.
 
     Scraping is a separate flow (``scrape-and-store`` — run on its own cron).
-    This flow only does: match → generate.
 
     Parameters
     ----------
@@ -292,6 +283,10 @@ def pull_and_process_jobs(
         Model for batch matching (cheap).
     generate_model : str | None
         Model for resume / cover letter (None → LLM_MODEL).
+    generate_fallback_model : str | None
+        Fallback model if primary fails.
+    generate_fallback_provider : str | None
+        Fallback provider if primary fails.
     match_provider : str | None
         Provider for matching (None → LLM_PROVIDER).
     generate_provider : str | None
@@ -306,32 +301,34 @@ def pull_and_process_jobs(
     )
     run_logger.info("Batch match complete — %d decisions saved.", matched_count)
 
-    # Step 2 — generate documents for matched jobs
+    # Step 2 — generate documents for matched jobs (parallel)
     jobs = fetch_matched_jobs(user_id, limit=job_limit)
     if not jobs:
         run_logger.info("No matched-but-unprocessed jobs found.")
         return
 
     run_logger.info("Generating documents for %d matched jobs.", len(jobs))
-    for job in jobs:
-        result = generate_application(
-            job_id=job.id,
-            user_id=user_id,
-            generate_model=generate_model,
-            generate_provider=generate_provider,
-        )
+    results = generate_application.map(
+        job_id=[j.id for j in jobs],
+        user_id=[user_id] * len(jobs),
+        generate_model=[generate_model] * len(jobs),
+        generate_provider=[generate_provider] * len(jobs),
+        generate_fallback_model=[generate_fallback_model] * len(jobs),
+        generate_fallback_provider=[generate_fallback_provider] * len(jobs),
+    )
+
+    # Step 3 — batch-apply for all completed jobs
+    for result in results:
         mark_processed(result)
-        if result.get("status") == "completed":
-            apply_result = apply_for_job(
-                job_id=job.id,
-                user_id=user_id,
-                generate_model=generate_model,
-                generate_provider=generate_provider,
-            )
-            run_logger.info(
-                "Apply agent: job=%s action=%s status=%s",
-                job.id, apply_result.get("action"), apply_result.get("status"),
-            )
+
+    completed_jobs = [j for j, r in zip(jobs, results) if r.get("status") == "completed"]
+    if completed_jobs:
+        apply_results = batch_process_applications(
+            user_id=user_id,
+            limit=len(completed_jobs),
+            model=generate_model,
+            provider=generate_provider,
+        )
 
 
 @flow(

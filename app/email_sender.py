@@ -1,6 +1,5 @@
 """
 Email sender via Gmail SMTP.
-Uses GMAIL_ADDRESS + GMAIL_APP_PASSWORD from config / Prefect blocks.
 """
 
 import logging
@@ -14,6 +13,15 @@ from email import encoders
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _resolve_path(path: str) -> str:
+    """Resolve relative paths to project-root-absolute."""
+    if not os.path.isabs(path):
+        return os.path.join(_PROJECT_ROOT, path)
+    return path
 
 
 def send_email(
@@ -47,6 +55,8 @@ def send_email(
         logger.error("Gmail credentials not configured (GMAIL_ADDRESS / GMAIL_APP_PASSWORD).")
         return False
 
+    logger.info("Sending email to %s (attachments=%d)", to, len(attachments or []))
+
     msg = MIMEMultipart()
     msg["From"] = from_addr
     msg["To"] = to
@@ -54,21 +64,23 @@ def send_email(
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
     for filepath in (attachments or []):
-        if not filepath or not os.path.isfile(filepath):
-            logger.warning("Attachment not found, skipping: %s", filepath)
+        resolved = _resolve_path(filepath) if filepath else ""
+        if not resolved or not os.path.isfile(resolved):
+            logger.warning("Attachment not found, skipping: %s (resolved=%s)", filepath, resolved)
             continue
         try:
-            with open(filepath, "rb") as f:
+            with open(resolved, "rb") as f:
                 part = MIMEBase("application", "octet-stream")
                 part.set_payload(f.read())
             encoders.encode_base64(part)
             part.add_header(
                 "Content-Disposition",
-                f'attachment; filename="{os.path.basename(filepath)}"',
+                "attachment",
+                filename=("utf-8", "en", os.path.basename(resolved)),
             )
             msg.attach(part)
         except OSError as e:
-            logger.warning("Failed to attach %s: %s", filepath, e)
+            logger.warning("Failed to attach %s: %s", resolved, e)
 
     try:
         server = smtplib.SMTP("smtp.gmail.com", 587)

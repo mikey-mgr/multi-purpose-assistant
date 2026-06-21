@@ -198,6 +198,7 @@ def _fetch_raw_profile_data(user_id, resume_id=None):
                     "cert_name": c.cert_name,
                     "issuing_organization": c.issuing_organization,
                     "issue_date": str(c.issue_date) if c.issue_date else None,
+                    "credential_url": c.credential_url,
                 }
                 for c in certifications
             ],

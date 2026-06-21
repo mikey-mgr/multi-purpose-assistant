@@ -1,3 +1,4 @@
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -203,11 +204,21 @@ class JobMatch(Base):
     id         = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
     job_id     = Column(Integer, ForeignKey('scraped_jobs.id', ondelete='CASCADE'), nullable=False)
     user_id    = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    status     = Column(String(20), nullable=False)   # 'matched' | 'rejected'
+    status     = Column(String(20), nullable=False)   # 'matched' | 'rejected' | 'generated' | 'applied'
     score      = Column(Integer)                       # 0–100
-    reason     = Column(Text)
+    reason     = Column(Text)                          # comprehensive analysis of gaps (overwritten by 03)
     matched_by = Column(String(20), default='llm')    # 'llm' | 'keyword_fallback'
     llm_raw    = Column(Text)
+
+    # Apply details — populated by 03 (ats_and_cover_v1)
+    apply_action      = Column(String(20))   # 'email' | 'external_link' | 'unknown'
+    apply_recipient   = Column(Text)         # email address (null if external_link)
+    apply_subject     = Column(Text)         # email subject (null if external_link)
+    apply_body        = Column(Text)         # email body (null if external_link)
+    apply_url         = Column(Text)         # external apply URL (null if email)
+    required_docs     = Column(Text)         # JSON array string e.g. '["resume","cover_letter"]'
+    proceed           = Column(String(20))   # 'apply_now' | 'needs_docs' | 'needs_info'
+
     created_at = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
 
     __table_args__ = (UniqueConstraint('job_id', 'user_id'),)
@@ -437,6 +448,42 @@ def get_matched_unprocessed_jobs(user_id: str, limit: int = 10):
         session.close()
 
 
+def get_generated_unapplied_jobs(user_id: str, limit: int = 10):
+    """
+    Fetch jobs that have documents generated but haven't been applied to yet.
+    """
+    session = get_session()
+    try:
+        return session.query(ScrapedJob).join(JobMatch, ScrapedJob.id == JobMatch.job_id).filter(
+            JobMatch.user_id == user_id,
+            JobMatch.status == 'generated',
+        ).limit(limit).all()
+    finally:
+        session.close()
+
+
+def get_generated_jobs_with_matches(user_id: str, limit: int = 10):
+    """
+    Fetch generated-but-unapplied jobs with their match score and reason.
+    Returns list of dicts with job data and match_data.
+    """
+    session = get_session()
+    try:
+        rows = session.query(ScrapedJob, JobMatch).join(JobMatch, ScrapedJob.id == JobMatch.job_id).filter(
+            JobMatch.user_id == user_id,
+            JobMatch.status == 'generated',
+        ).limit(limit).all()
+        return [
+            {
+                "job": job,
+                "match": match,
+            }
+            for job, match in rows
+        ]
+    finally:
+        session.close()
+
+
 def bulk_insert_job_matches(matches: list[dict]):
     """Insert multiple JobMatch rows (batch result from LLM)."""
     session = get_session()
@@ -465,6 +512,56 @@ def update_job_match_status(job_id: int, user_id: str, status: str) -> bool:
             return True
         logger.warning("No JobMatch found for job %s / user %s", job_id, user_id)
         return False
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def save_apply_details(
+    job_id: int,
+    user_id: str,
+    apply_action: str | None = None,
+    apply_recipient: str | None = None,
+    apply_subject: str | None = None,
+    apply_body: str | None = None,
+    apply_url: str | None = None,
+    required_docs: list[str] | None = None,
+    reason: str | None = None,
+    proceed: str | None = None,
+) -> bool:
+    """Save apply details and updated reason to a JobMatch row."""
+    session = get_session()
+    try:
+        row = session.query(JobMatch).filter(
+            JobMatch.job_id == job_id,
+            JobMatch.user_id == user_id,
+        ).first()
+        if not row:
+            logger.warning("No JobMatch found for job %s / user %s", job_id, user_id)
+            return False
+
+        if apply_action is not None:
+            row.apply_action = apply_action
+        if apply_recipient is not None:
+            row.apply_recipient = apply_recipient
+        if apply_subject is not None:
+            row.apply_subject = apply_subject
+        if apply_body is not None:
+            row.apply_body = apply_body
+        if apply_url is not None:
+            row.apply_url = apply_url
+        if required_docs is not None:
+            row.required_docs = json.dumps(required_docs)
+        if reason is not None:
+            row.reason = reason
+        if proceed is not None:
+            row.proceed = proceed
+
+        row.status = 'generated'
+        session.commit()
+        return True
     except Exception:
         session.rollback()
         raise

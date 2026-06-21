@@ -23,10 +23,12 @@ _DEFAULTS = {
     "user_id": "ff0465b9-6512-4f47-8b5e-6f14a343a25d",
     "match_model": "openai/gpt-oss-120b:free",
     "generate_model": "models/gemini-3.1-flash-lite",
+    "generate_fallback_model": "openai/gpt-oss-120b:free",
     "match_provider": "openrouter",
     "generate_provider": "gemini",
-    "match_limit": 25, #02-matcher limit
-    "job_limit": 10, #03-generator limit
+    "generate_fallback_provider": "openrouter",
+    "match_limit": 25,  # 02-matcher limit
+    "job_limit": 15,    # 03-generator limit
     "scrape_site_names": None,  # None = all sites
     "scrape_max_pages": {"vacancybox": 1, "iharare": 2, "vacancymail": 2},
 }
@@ -56,7 +58,7 @@ def build():
                 "limit": _DEFAULTS["match_limit"],
             },
         ),
-        # 3. Standalone generator (generate docs → apply)
+        # 3. Standalone generator (generate docs only, no apply)
         generate_matched_flow.to_deployment(
             name="03-generator",
             tags=["production", "generation"],
@@ -65,6 +67,8 @@ def build():
                 "user_id": _DEFAULTS["user_id"],
                 "generate_model": _DEFAULTS["generate_model"],
                 "generate_provider": _DEFAULTS["generate_provider"],
+                "generate_fallback_model": _DEFAULTS["generate_fallback_model"],
+                "generate_fallback_provider": _DEFAULTS["generate_fallback_provider"],
                 "limit": _DEFAULTS["job_limit"],
             },
         ),

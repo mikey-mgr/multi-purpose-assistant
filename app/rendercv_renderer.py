@@ -87,7 +87,9 @@ def build_yaml_dict(
 
     # ── Skills ──────────────────────────────────────────────────────
     skills_override = overrides.get("skills")
-    if skills_override:
+    if isinstance(skills_override, list) and all(
+        isinstance(s, dict) and "label" in s and "details" in s for s in skills_override
+    ):
         sections["skills"] = skills_override
     elif skills:
         sections["skills"] = _group_skills(skills)
@@ -117,10 +119,12 @@ def build_yaml_dict(
             highlights.append(f"Grade: {edu['grade_or_class']}")
         degree = edu.get("degree_type", "")
         field = edu.get("field_of_study", "")
-        area = f"{degree} in {field}" if degree and field else (degree or field)
+        # area should be just the field, degree is separate — RenderCV's
+        # DEGREE_WITH_AREA locale template combines them properly
         edu_list.append({
             "institution": edu.get("institution_name"),
-            "area": area,
+            "area": field or None,
+            "degree": degree or None,
             "start_date": _fmt_date(edu.get("start_date")),
             "end_date": _fmt_date(edu.get("end_date")),
             "highlights": highlights or None,
@@ -131,8 +135,10 @@ def build_yaml_dict(
     # ── Certifications ──────────────────────────────────────────────
     cert_list = []
     for cert in certifications:
+        cname = cert.get("cert_name") or ""
+        curl = cert.get("credential_url")
         cert_list.append({
-            "name": cert.get("cert_name"),
+            "name": f"[{cname} (Click to view)]({curl})" if curl else cname,
             "issuer": cert.get("issuing_organization"),
             "date": _fmt_date(cert.get("issue_date")),
         })
@@ -146,21 +152,29 @@ def build_yaml_dict(
         pname = proj.get("project_name", "")
         highlights = proj_overrides.get(pname, proj.get("bullet_points", []))
         purl = proj.get("project_url")
-        if purl:
-            pname = f"{pname} (Link)"
-        proj_list.append({
+        entry = {
             "name": pname,
             "location": None,
             "start_date": _fmt_date(proj.get("start_date")),
             "end_date": _fmt_date(proj.get("end_date")),
             "summary": proj.get("description"),
             "highlights": highlights or None,
-        })
+        }
+        if purl:
+            entry["name"] = f"[{pname} (Click to view)]({purl})"
+        proj_list.append(entry)
     if proj_list:
         sections["projects"] = proj_list
 
     cv["cv"]["sections"] = sections
-    cv["design"] = {"theme": "harvard"}
+    cv["design"] = {
+        "theme": "harvard",
+        "templates": {
+            "education_entry": {
+                "degree_column": "",
+            },
+        },
+    }
     return cv
 
 
@@ -208,9 +222,8 @@ def render(
         yaml.dump(cv_dict, tmp, allow_unicode=True, sort_keys=False)
 
     try:
-        # rendercv writes to a subfolder named after the YAML's stem
-        stem = Path(yaml_path).stem
-        rendercv_out = Path(yaml_path).parent / stem
+        # rendercv v2.x outputs files to the YAML's parent directory
+        rendercv_out = Path(yaml_path).parent
 
         result = subprocess.run(
             ["rendercv", "render", yaml_path, "--output-folder", str(rendercv_out)],
@@ -222,10 +235,11 @@ def render(
         if result.returncode != 0:
             logger.warning("rendercv exited %d (may be a false positive)", result.returncode)
 
-        # rendercv generates <stem>_cv.pdf — find *any* PDF in the output
-        pdf_files = list(rendercv_out.glob("*.pdf")) if rendercv_out.is_dir() else []
+        # v2.x generates NAME_IN_SNAKE_CASE_CV.pdf in the YAML's parent directory
+        pdf_files = list(rendercv_out.glob("*CV*.pdf")) if rendercv_out.is_dir() else []
         if not pdf_files:
-            logger.warning("No PDF found in rendercv output; check stderr:\n%s", result.stderr)
+            logger.warning("No PDF found in rendercv output; stderr:\n%s", result.stderr)
+            logger.warning("rendercv stdout:\n%s", result.stdout)
             return ""
 
         src_pdf = str(pdf_files[0])

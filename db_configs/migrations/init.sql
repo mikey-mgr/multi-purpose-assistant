@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS prompts (
     description         TEXT,
     system_prompt       TEXT NOT NULL,
     user_prompt_template TEXT,
-    prompt_type         VARCHAR(50) NOT NULL,  -- 'resume', 'cover_letter', 'skills_analysis', 'interview_prep'
+    prompt_type         VARCHAR(50) NOT NULL,  -- 'resume', 'cover_letter', 'skills_analysis', 'interview_prep', 'apply_agent', 'job_matcher'
     model               VARCHAR(100) DEFAULT 'gpt-4',
     temperature         NUMERIC(3,2) DEFAULT 0.7,
     max_tokens          INTEGER DEFAULT 2048,
@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS job_matches (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     job_id     INTEGER NOT NULL REFERENCES scraped_jobs(id) ON DELETE CASCADE,
     user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    status     VARCHAR(20) NOT NULL CHECK (status IN ('matched', 'rejected', 'applied')),
+    status     VARCHAR(20) NOT NULL CHECK (status IN ('matched', 'rejected', 'generated', 'applied', 'waiting')),
     score      INTEGER CHECK (score >= 0 AND score <= 100),
     reason     TEXT,
     matched_by VARCHAR(20) DEFAULT 'llm' CHECK (matched_by IN ('llm', 'keyword_fallback')),
@@ -212,6 +212,20 @@ CREATE TABLE IF NOT EXISTS job_matches (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('Africa/Harare', CURRENT_TIMESTAMP),
     UNIQUE(job_id, user_id)
 );
+
+-- Apply details columns (populated by 03 generator)
+ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS apply_action      VARCHAR(20);
+ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS apply_recipient   TEXT;
+ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS apply_subject     TEXT;
+ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS apply_body        TEXT;
+ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS apply_url         TEXT;
+ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS required_docs     TEXT;
+ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS proceed           VARCHAR(20);
+
+-- Update status constraint to include 'waiting' (for existing tables)
+ALTER TABLE job_matches DROP CONSTRAINT IF EXISTS job_matches_status_check;
+ALTER TABLE job_matches ADD CONSTRAINT job_matches_status_check
+    CHECK (status IN ('matched', 'rejected', 'generated', 'applied', 'waiting'));
 
 -- ── RAG View: Consolidated Resume Snapshots ──────────────────────────
 
