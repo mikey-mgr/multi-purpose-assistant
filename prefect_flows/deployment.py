@@ -1,8 +1,9 @@
 """
 Prefect 3 deployment registration + serve.
 
-Serves five independent deployments so you can run any stage
-in isolation (e.g. just match, just generate) or the full pipeline.
+Serves four independent deployments.
+When ``01-scraper`` runs via schedule, it auto-chains 02→03→04.
+Manual runs stop at scrape.
 
 Usage:
     python prefect_flows/deployment.py
@@ -16,7 +17,6 @@ from prefect_flows.job_pipeline import (
     match_jobs_flow,
     generate_matched_flow,
     apply_agent_flow,
-    pull_and_process_jobs,
 )
 
 _DEFAULTS = {
@@ -36,14 +36,24 @@ _DEFAULTS = {
 
 def build():
     serve(
-        # 1. Standalone scrape
+        # 1. Standalone scrape — auto-chains 02→03→04 when scheduled
         scrape_and_store.to_deployment(
             name="01-scraper",
+            schedules=[CronSchedule(cron="0 7-21/2 * * *", timezone="Africa/Harare")],
             tags=["production", "scraping"],
-            description="Scrape job boards every 2 hours (7am-10pm).",
+            description="Scrape job boards every 2 hours (7am-10pm). Auto-chains 02→03→04 when scheduled.",
             parameters={
                 "site_names": _DEFAULTS["scrape_site_names"],
                 "max_pages": _DEFAULTS["scrape_max_pages"],
+                "user_id": _DEFAULTS["user_id"],
+                "match_model": _DEFAULTS["match_model"],
+                "match_provider": _DEFAULTS["match_provider"],
+                "generate_model": _DEFAULTS["generate_model"],
+                "generate_provider": _DEFAULTS["generate_provider"],
+                "generate_fallback_model": _DEFAULTS["generate_fallback_model"],
+                "generate_fallback_provider": _DEFAULTS["generate_fallback_provider"],
+                "match_limit": _DEFAULTS["match_limit"],
+                "job_limit": _DEFAULTS["job_limit"],
             },
         ),
         # 2. Standalone matcher
@@ -83,15 +93,6 @@ def build():
                 "generate_provider": _DEFAULTS["generate_provider"],
                 "limit": _DEFAULTS["job_limit"],
             },
-        ),
-        # 5. Match → generate → apply (all-in-one)
-        pull_and_process_jobs.to_deployment(
-            name="job-pipeline",
-            schedules=[CronSchedule(cron="0 7-21/2 * * *", timezone="Africa/Harare")],
-            tags=["production", "job-application"],
-            description="Match unscored jobs → generate docs → apply.",
-            parameters=_DEFAULTS,
-            version="4",
         ),
     )
 

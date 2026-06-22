@@ -1,12 +1,14 @@
 """
 Prefect flows for the automated job application pipeline.
 
-Exposes five independently-deployable flows:
+Exposes four independently-deployable flows:
   1. scrape-and-store      — run scrapers, insert jobs
   2. match-jobs            — batch-classify unscored jobs
   3. generate-matched      — generate docs for matched jobs
   4. apply-agent           — process apply_instructions for matched jobs
-  5. pull-and-process      — scrape → match → generate → apply (all-in-one)
+
+When ``scrape-and-store`` runs via schedule, it auto-chains 02→03→04.
+Manual runs stop at scrape.
 """
 
 import logging
@@ -17,6 +19,7 @@ from app.config import settings
 from app.matcher import batch_match_jobs
 from app.orchestrator import process_job_for_user, batch_process_applications
 from core.database import get_matched_unprocessed_jobs, update_job_match_status
+from prefect.context import FlowRunContext
 from scrapers.unified_scraper import UnifiedJobScraper
 
 logger = logging.getLogger(__name__)
@@ -70,12 +73,6 @@ def fetch_matched_jobs(user_id: str, limit: int = 10) -> list:
     return get_matched_unprocessed_jobs(user_id, limit=limit)
 
 
-@task(retries=2, retry_delay_seconds=30)
-def fetch_generated_jobs(user_id: str, limit: int = 10) -> list:
-    """Fetch jobs that have documents generated but not yet applied to."""
-    return get_generated_unapplied_jobs(user_id, limit=limit)
-
-
 @task
 def generate_application(
     job_id: int,
@@ -127,11 +124,59 @@ def mark_processed(result: dict) -> None:
 def scrape_and_store(
     site_names: list[str] | None = None,
     max_pages: dict = {},
+    user_id: str | None = None,
+    match_model: str | None = None,
+    match_provider: str | None = None,
+    generate_model: str | None = None,
+    generate_provider: str | None = None,
+    generate_fallback_model: str | None = None,
+    generate_fallback_provider: str | None = None,
+    match_limit: int = 50,
+    job_limit: int = 10,
 ):
-    """Scrape iHarare, VacancyBox, VacancyMail and insert new jobs."""
+    """Scrape job boards then auto-chain 02→03→04 if triggered by schedule."""
     run_logger = get_run_logger()
     count = run_scrapers(site_names=site_names, max_pages=max_pages)
     run_logger.info("Scrape complete — %d new jobs inserted.", count)
+
+    # Auto-chain downstream flows only when triggered by schedule
+    ctx = FlowRunContext.get()
+    if ctx and ctx.flow_run and ctx.flow_run.auto_scheduled:
+        if not user_id:
+            run_logger.warning("No user_id — skipping downstream pipeline.")
+            return
+
+        run_logger.info("Auto-scheduled — chaining 02→03→04...")
+
+        # Step 2 — match unscored jobs
+        match_jobs_flow(
+            user_id=user_id,
+            limit=match_limit,
+            match_model=match_model,
+            match_provider=match_provider,
+        )
+
+        # Step 3 — generate docs for matched jobs
+        generate_matched_flow(
+            user_id=user_id,
+            limit=job_limit,
+            generate_model=generate_model,
+            generate_provider=generate_provider,
+            generate_fallback_model=generate_fallback_model,
+            generate_fallback_provider=generate_fallback_provider,
+        )
+
+        # Step 4 — apply via email / WhatsApp
+        apply_agent_flow(
+            user_id=user_id,
+            limit=job_limit,
+            generate_model=generate_model,
+            generate_provider=generate_provider,
+        )
+
+        run_logger.info("Downstream pipeline complete.")
+    else:
+        run_logger.info("Manual run — stopping after scrape.")
 
 
 @flow(
@@ -249,89 +294,6 @@ def apply_agent_flow(
 
 
 @flow(
-    name="pull-and-process-jobs",
-    description="Match unscored jobs → generate resume + cover letter for matches.",
-    retries=1,
-    retry_delay_seconds=60,
-    log_prints=True,
-)
-def pull_and_process_jobs(
-    user_id: str,
-    match_limit: int = 50,
-    job_limit: int = 10,
-    match_model: str = "openai/gpt-4o-mini",
-    generate_model: str | None = None,
-    match_provider: str | None = None,
-    generate_provider: str | None = None,
-    generate_fallback_model: str | None = None,
-    generate_fallback_provider: str | None = None,
-    **kwargs,
-):
-    """
-    Match unscored jobs, generate for matched ones, then apply.
-
-    Scraping is a separate flow (``scrape-and-store`` — run on its own cron).
-
-    Parameters
-    ----------
-    user_id : str
-    match_limit : int
-        Max unscored jobs to evaluate this run.
-    job_limit : int
-        Max matched-but-unprocessed jobs to generate for this run.
-    match_model : str
-        Model for batch matching (cheap).
-    generate_model : str | None
-        Model for resume / cover letter (None → LLM_MODEL).
-    generate_fallback_model : str | None
-        Fallback model if primary fails.
-    generate_fallback_provider : str | None
-        Fallback provider if primary fails.
-    match_provider : str | None
-        Provider for matching (None → LLM_PROVIDER).
-    generate_provider : str | None
-        Provider for generation (None → LLM_PROVIDER).
-    """
-    run_logger = get_run_logger()
-    run_logger.info("Starting pipeline for user %s ...", user_id)
-
-    # Step 1 — match unscored jobs
-    matched_count = match_pending_jobs(
-        user_id, limit=match_limit, match_model=match_model, match_provider=match_provider
-    )
-    run_logger.info("Batch match complete — %d decisions saved.", matched_count)
-
-    # Step 2 — generate documents for matched jobs (parallel)
-    jobs = fetch_matched_jobs(user_id, limit=job_limit)
-    if not jobs:
-        run_logger.info("No matched-but-unprocessed jobs found.")
-        return
-
-    run_logger.info("Generating documents for %d matched jobs.", len(jobs))
-    results = generate_application.map(
-        job_id=[j.id for j in jobs],
-        user_id=[user_id] * len(jobs),
-        generate_model=[generate_model] * len(jobs),
-        generate_provider=[generate_provider] * len(jobs),
-        generate_fallback_model=[generate_fallback_model] * len(jobs),
-        generate_fallback_provider=[generate_fallback_provider] * len(jobs),
-    )
-
-    # Step 3 — batch-apply for all completed jobs
-    for result in results:
-        mark_processed(result)
-
-    completed_jobs = [j for j, r in zip(jobs, results) if r.get("status") == "completed"]
-    if completed_jobs:
-        apply_results = batch_process_applications(
-            user_id=user_id,
-            limit=len(completed_jobs),
-            model=generate_model,
-            provider=generate_provider,
-        )
-
-
-@flow(
     name="manual-generate",
     description="One-shot generation for a specific job + user.",
 )
@@ -360,4 +322,4 @@ if __name__ == "__main__":
         manual_generate(user_id=sys.argv[2], job_id=int(sys.argv[3]))
     else:
         user_id = sys.argv[1] if len(sys.argv) >= 2 else "default"
-        pull_and_process_jobs(user_id=user_id)
+        scrape_and_store(user_id=user_id)
