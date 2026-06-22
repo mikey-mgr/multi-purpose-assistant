@@ -198,3 +198,86 @@ def generate_embedding(text: str, provider: str | None = None) -> list[float]:
         input=text,
     )
     return response.data[0].embedding
+
+
+def generate_text_multimodal(
+    system_prompt: str,
+    user_text: str,
+    image_base64: str,
+    mimetype: str = "image/jpeg",
+    model: str | None = None,
+    provider: str | None = None,
+    max_tokens: int = 8192,
+    temperature: float = 0.7,
+) -> dict[str, Any]:
+    """
+    Call a multimodal-capable LLM (Gemini) with text + image.
+
+    Constructs an OpenAI-compatible multimodal message array and sends
+    via the Gemini endpoint. Only works with Gemini (not OpenRouter).
+
+    Parameters
+    ----------
+    system_prompt : str
+        System-level instructions (merged into user message for Gemini).
+    user_text : str
+        Text prompt accompanying the image.
+    image_base64 : str
+        Base64-encoded image data (without ``data:`` prefix).
+    mimetype : str
+        Image MIME type (e.g. ``image/jpeg``, ``image/png``).
+    model : str | None
+        Overrides ``settings.LLM_MODEL`` (must be a Gemini vision model).
+    provider : str | None
+        Must be ``"gemini"`` or ``None`` (defaults to settings.LLM_PROVIDER).
+    max_tokens : int
+        Max output tokens (default 8192).
+    temperature : float
+        LLM temperature (default 0.7).
+
+    Returns
+    -------
+    dict with ``content``, ``model``, ``tokens_used``.
+    """
+    resolved_provider = provider or settings.LLM_PROVIDER
+    client = _get_client(resolved_provider)
+    if not client:
+        logger.warning("No API key for '%s' — returning mock.", resolved_provider)
+        return {"content": "[MOCK] multimodal output", "model": "mock", "tokens_used": 0}
+
+    resolved_model = model or settings.LLM_MODEL
+    logger.info("Calling multimodal via %s (model=%s, image=%s, text=%d chars)",
+                resolved_provider, resolved_model, mimetype, len(user_text))
+
+    content = system_prompt
+    if user_text:
+        content += "\n\n" + user_text
+
+    # Build multimodal content array: text + image
+    image_url = f"data:{mimetype};base64,{image_base64}"
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": content},
+                {"type": "image_url", "image_url": {"url": image_url}},
+            ],
+        }
+    ]
+
+    response = client.chat.completions.create(
+        model=resolved_model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+    result = response.choices[0].message.content
+    logger.info("Multimodal response: %d chars, %d tokens",
+                len(result or ""),
+                response.usage.total_tokens if response.usage else 0)
+    return {
+        "content": result,
+        "model": response.model,
+        "tokens_used": response.usage.total_tokens if response.usage else 0,
+    }

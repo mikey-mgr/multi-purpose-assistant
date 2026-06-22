@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import uuid
 from datetime import datetime
 
@@ -138,6 +139,22 @@ class Certification(Base):
     resume = relationship('Resume', back_populates='certifications')
 
 
+# ── User Documents (ID, driver's license, proof of age, etc.) ─────────
+
+
+class UserDocument(Base):
+    __tablename__ = 'user_documents'
+
+    id         = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
+    user_id    = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    doc_type   = Column(String(50), nullable=False)
+    file_path  = Column(Text, nullable=False)
+    label      = Column(String(200))
+    created_at = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+
+    __table_args__ = (UniqueConstraint('user_id', 'doc_type'),)
+
+
 # ── Skills ────────────────────────────────────────────────────────────
 
 class Skill(Base):
@@ -218,6 +235,8 @@ class JobMatch(Base):
     apply_url         = Column(Text)         # external apply URL (null if email)
     required_docs     = Column(Text)         # JSON array string e.g. '["resume","cover_letter"]'
     proceed           = Column(String(20))   # 'apply_now' | 'needs_docs' | 'needs_info'
+    expiry_date       = Column(Date)         # closing date extracted from listing by 03-generator
+    merged_pdf        = Column(Boolean, default=False)  # true if employer wants a single merged PDF
 
     created_at = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
 
@@ -417,6 +436,44 @@ def get_unscored_jobs(user_id: str, limit: int = 50):
         session.close()
 
 
+def get_deduped_unscored_jobs(user_id: str, limit: int = 50):
+    """Fetch unscored jobs deduped by (company, normalized_title).
+
+    Returns (deduped_jobs, dedup_map) where dedup_map maps the
+    selected job_id → [duplicate job_ids] that were collapsed into it.
+    """
+    session = get_session()
+    try:
+        subq = session.query(JobMatch.job_id).filter(JobMatch.user_id == user_id)
+        jobs = session.query(ScrapedJob).filter(
+            ~ScrapedJob.id.in_(subq)
+        ).limit(limit * 3).all()
+
+        groups: dict[tuple[str, str], list[ScrapedJob]] = {}
+        for job in jobs:
+            key = (normalize_job_title(job.title or ""), (job.company or "").strip().lower())
+            groups.setdefault(key, []).append(job)
+
+        deduped: list[ScrapedJob] = []
+        dedup_map: dict[int, list[int]] = {}
+        for group in groups.values():
+            best = max(group, key=lambda j: (
+                bool(j.description),
+                bool(j.location),
+                bool(j.job_type),
+                bool(j.compensation),
+                j.id or 0,
+            ))
+            deduped.append(best)
+            dups = [j.id for j in group if j.id != best.id]
+            if dups:
+                dedup_map[best.id] = dups
+
+        return deduped[:limit], dedup_map
+    finally:
+        session.close()
+
+
 def get_matched_unprocessed_jobs(user_id: str, limit: int = 10):
     """
     Fetch matched jobs that don't have a generated resume for the user's active resume yet.
@@ -519,6 +576,38 @@ def update_job_match_status(job_id: int, user_id: str, status: str) -> bool:
         session.close()
 
 
+def find_existing_application(
+    user_id: str,
+    recipient: str,
+    title: str,
+    exclude_job_id: int | None = None,
+) -> JobMatch | None:
+    """Check if this user already applied to the same recipient for a similar title.
+
+    Used as generate-time dedup (step 03). Returns the existing JobMatch if found.
+    """
+    session = get_session()
+    try:
+        uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+        query = session.query(JobMatch).filter(
+            JobMatch.user_id == uid,
+            JobMatch.apply_recipient == recipient,
+            JobMatch.status.in_(["generated", "applied", "waiting", "duplicate"]),
+        )
+        if exclude_job_id:
+            query = query.filter(JobMatch.job_id != exclude_job_id)
+        # Fetch matching rows and compare normalized titles
+        norm_title = normalize_job_title(title) if title else ""
+        for match in query.all():
+            job = session.query(ScrapedJob).filter(ScrapedJob.id == match.job_id).first()
+            if job and job.title and norm_title:
+                if normalize_job_title(job.title) == norm_title:
+                    return match
+        return None
+    finally:
+        session.close()
+
+
 def save_apply_details(
     job_id: int,
     user_id: str,
@@ -530,6 +619,8 @@ def save_apply_details(
     required_docs: list[str] | None = None,
     reason: str | None = None,
     proceed: str | None = None,
+    expiry_date: str | None = None,
+    merged_pdf: bool | None = None,
 ) -> bool:
     """Save apply details and updated reason to a JobMatch row."""
     session = get_session()
@@ -558,6 +649,11 @@ def save_apply_details(
             row.reason = reason
         if proceed is not None:
             row.proceed = proceed
+        if expiry_date is not None:
+            from datetime import date
+            row.expiry_date = date.fromisoformat(expiry_date)
+        if merged_pdf is not None:
+            row.merged_pdf = merged_pdf
 
         row.status = 'generated'
         session.commit()
@@ -574,11 +670,13 @@ def get_application_documents(resume_id: str, job_id: int) -> dict:
     Collect all available document paths for a resume + job combo.
 
     Returns dict with keys: 'resume_pdf', 'resume_docx', 'cover_letter_docx',
-    'education_docs' (list), 'certification_docs' (list).
+    'education_docs' (list), 'certification_docs' (list), 'misc_docs' (dict[doc_type → path]).
     """
     session = get_session()
     try:
         rid = uuid.UUID(resume_id) if isinstance(resume_id, str) else resume_id
+        resume = session.get(Resume, rid)
+        user_id = resume.user_id if resume else None
 
         # Generated documents for this resume + job
         gen = session.query(GeneratedDocument).filter(
@@ -592,6 +690,7 @@ def get_application_documents(resume_id: str, job_id: int) -> dict:
             "cover_letter_docx": None,
             "education_docs": [],
             "certification_docs": [],
+            "misc_docs": {},
         }
 
         for doc in gen:
@@ -612,6 +711,13 @@ def get_application_documents(resume_id: str, job_id: int) -> dict:
         for c in cert_rows:
             if c.document_path:
                 result["certification_docs"].append(c.document_path)
+
+        # Misc user documents (ID, driver's license, etc.)
+        if user_id:
+            misc_rows = session.query(UserDocument).filter(UserDocument.user_id == user_id).all()
+            for m in misc_rows:
+                if m.file_path:
+                    result["misc_docs"][m.doc_type] = m.file_path
 
         return result
     except Exception:
@@ -655,6 +761,17 @@ def build_prompt(prompt_name, **variables):
     return system, user_template, prompt
 
 
+# ── Title normalisation helper ──────────────────────────────────────
+
+def normalize_job_title(title: str) -> str:
+    """Normalize a job title for dedup comparison: lowercase, strip, collapse whitespace."""
+    import re
+    t = (title or "").strip().lower()
+    t = re.sub(r'[^\w\s-]', '', t)
+    t = re.sub(r'\s+', ' ', t)
+    return t
+
+
 # ── Helpers for scraped_jobs ────────────────────────────────────────
 
 def _parse_date(value):
@@ -676,8 +793,34 @@ def get_existing_job_urls() -> set[str]:
         session.close()
 
 
+def find_similar_job(
+    title: str,
+    company: str,
+    location: str | None = None,
+    exclude_url: str | None = None,
+) -> ScrapedJob | None:
+    """Find an existing job with matching (title, company) case-insensitively.
+
+    Location is intentionally NOT used — same job posted on different sites
+    often has slightly different location formatting ("Harare" vs "Harare, Zimbabwe").
+    """
+    session = get_session()
+    try:
+        _title = str(title or "")
+        _company = str(company or "")
+        query = session.query(ScrapedJob).filter(
+            func.trim(func.lower(ScrapedJob.title)) == func.trim(func.lower(_title)),
+            func.trim(func.lower(ScrapedJob.company)) == func.trim(func.lower(_company)),
+        )
+        if exclude_url:
+            query = query.filter(ScrapedJob.job_url != exclude_url)
+        return query.first()
+    finally:
+        session.close()
+
+
 def insert_jobs(jobs_list):
-    """Insert a list of job dicts into scraped_jobs. Skips duplicates by job_url."""
+    """Insert a list of job dicts into scraped_jobs. Skips duplicates by job_url and by (title, company, location)."""
     if not jobs_list:
         return 0
 
@@ -686,6 +829,15 @@ def insert_jobs(jobs_list):
     try:
         for job in jobs_list:
             url = job.get('job_url')
+            title = job.get('title')
+            company = job.get('company')
+            # Scrapers may return NaN (float) for missing values; convert to empty string
+            if isinstance(title, float) and math.isnan(title):
+                title = ""
+            if isinstance(company, float) and math.isnan(company):
+                company = ""
+
+            # Skip if job_url already exists
             if url:
                 existing = session.query(ScrapedJob).filter(
                     ScrapedJob.job_url == url
@@ -693,11 +845,26 @@ def insert_jobs(jobs_list):
                 if existing:
                     continue
 
+            # Skip if same (title, company, location) exists (cross-site dedup)
+            if title and company:
+                similar = find_similar_job(
+                    title=title,
+                    company=company,
+                    location=job.get('location'),
+                    exclude_url=url,
+                )
+                if similar:
+                    logger.info(
+                        "Skipped duplicate job '%s' at '%s' (matches existing #%d from %s)",
+                        title, company, similar.id, similar.site,
+                    )
+                    continue
+
             db_job = ScrapedJob(
                 site=job.get('site'),
-                title=job.get('title'),
-                company=job.get('company'),
-                job_url=job.get('job_url'),
+                title=title,
+                company=company,
+                job_url=url,
                 location=job.get('location'),
                 description=job.get('description'),
                 job_type=job.get('job_type'),

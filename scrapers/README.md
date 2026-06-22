@@ -1,6 +1,6 @@
-# Scrapers — Job Board Scrapers
+# Scrapers — Structured Data Ingestion
 
-Modular scrapers for Zimbabwean job boards. Each scraper can run standalone or via the unified interface.
+Modular data ingestion modules for structured extraction from regional employment listing platforms. Each module can run standalone or via the unified interface.
 
 ## Modules
 
@@ -51,7 +51,7 @@ jobs = scrape_vacancymail_jobs(max_pages=3, delay=10)
 
 ## Unified Interface
 
-The `UnifiedJobScraper` aggregates all site scrapers and provides a `pandas.DataFrame` output.
+The `UnifiedJobScraper` aggregates all site modules and provides a `pandas.DataFrame` output.
 
 ```python
 from scrapers.unified_scraper import UnifiedJobScraper, scrape_jobs
@@ -75,11 +75,11 @@ df = scrape_jobs(results_wanted=50)
 | `results_wanted` | int | 50 | Max total jobs across all sites |
 | `hours_old` | int | 72 | Max age (hours) — stored in schema, not enforced |
 
-Supported sites: `iharare`, `vacancybox`, `vacancymail`.
+Supported sites are configured via the scraper modules in this directory.
 
 ## Output Schema
 
-All scrapers produce a standardized list of dicts with these fields:
+All modules produce a standardized list of dicts with these fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -96,10 +96,10 @@ All scrapers produce a standardized list of dicts with these fields:
 | `category` | str/None | Job category (iharare, vacancymail) |
 | `remote` | str/None | Remote status (not yet populated) |
 
-## Per-Scraper Notes
+## Per-Module Notes
 
 ### iHarare (`iharare_scraper.py`)
-- Scrapes listing pages then individual detail pages.
+- Retrieves listing pages then individual detail pages via HTTP requests.
 - Extracts: title, company, location, job type, category, description, dates.
 - Description focuses on relevant sections (duties, requirements, skills) and excludes "How to Apply".
 
@@ -109,14 +109,14 @@ All scrapers produce a standardized list of dicts with these fields:
 - Description cleaning removes ad divs, "TO APPLY" sections, and trims trailing contact info.
 
 ### VacancyMail (`vacancymail_scraper.py`)
-- Scrapes listing pages then individual detail pages.
+- Retrieves listing pages then individual detail pages.
 - Extracts: title, company, location, job type, salary, category, dates, description.
 - Only scraper that provides `compensation` (salary) data.
 - Parses relative posted times ("Posted 3 days ago") into absolute dates.
 
 ## Output & Persistence
 
-When run via `python -m scrapers.<module>` or the unified `__main__`, each scraper **inserts job records** into the local PostgreSQL `ai_assistant` database (`scraped_jobs` table). Duplicates are skipped based on `job_url`.
+When run via `python -m scrapers.<module>` or the unified `__main__`, records are inserted into the local PostgreSQL `ai_assistant` database (`scraped_jobs` table). Duplicates are skipped based on `job_url`.
 
 Database credentials are read from the `DB_CONN_URI` environment variable (see `.env`).
 
@@ -126,7 +126,7 @@ Run the migration to initialise the database:
 psql -U postgres -f db_configs/migrations/init.sql
 ```
 
-Or let the scraper create the table automatically on first run (`init_db()` is called from each `__main__` block).
+Or let the module create the table automatically on first run (`init_db()` is called from each `__main__` block).
 
 ## Default Behaviour
 

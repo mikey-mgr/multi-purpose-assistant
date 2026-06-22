@@ -16,3 +16,6 @@ rendercv>=2.8
 # Install in prefect_env separately:
 #   pip install "fastapi<0.115.0" "starlette<0.39.0" "cyclopts>=4.8.0"
 # prefect>=3.7,<4
+
+fpdf2>=2.8.0
+pypdf>=5.0.0

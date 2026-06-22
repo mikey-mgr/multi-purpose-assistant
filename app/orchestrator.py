@@ -18,11 +18,13 @@ import time
 from core.database import (
     get_session,
     ScrapedJob,
+    JobMatch,
     save_generated_document,
     update_job_match_status,
     get_application_documents,
     get_generated_jobs_with_matches,
     save_apply_details,
+    normalize_job_title,
     Resume,
     User,
 )
@@ -180,6 +182,8 @@ def process_job_for_user(
                 required_docs=apply_details.get("required_docs"),
                 reason=missing_resources,
                 proceed=apply_details.get("proceed"),
+                expiry_date=apply_details.get("expiry_date"),
+                merged_pdf=apply_details.get("merged_pdf"),
             )
             logger.info("Apply details saved for job %s.", job_id)
 
@@ -392,9 +396,10 @@ def batch_process_applications(
         logger.warning("No active resume found for user %s", user_id)
         return []
 
-    # 3. Send emails where applicable, track results
     results_map: dict[int, dict] = {}
     email_sent_map: dict[int, bool] = {}
+    whatsapp_doc_sent_map: dict[int, bool] = {}
+    seen_recipient_titles: set[tuple[str, str]] = set()
 
     for item in jobs_with_matches:
         job = item["job"]
@@ -408,14 +413,45 @@ def batch_process_applications(
         required_docs_raw = match.required_docs
         required_docs = json.loads(required_docs_raw) if required_docs_raw else ["resume"]
 
+        # Step 04 dedup: skip email if same (recipient + normalized title) already emailed or in DB
+        title_key = normalize_job_title(job.title or "")
+        dup_key = (recip or "", title_key)
+        if recip and dup_key in seen_recipient_titles:
+            logger.info(
+                "Dedup: skipping email for job #%d '%s' — already emailed '%s' for same title.",
+                job.id, job.title, recip,
+            )
+            email_sent_map[job.id] = False
+            whatsapp_doc_sent_map[job.id] = False
+            results_map[job.id] = {"action": action, "missing_docs": []}
+            update_job_match_status(job.id, user_id, "duplicate")
+            continue
+
         # Determine missing docs
         docs = get_application_documents(resolve_resume_id, job.id)
         missing_docs = [d for d in required_docs if not _doc_available(d, docs)]
+        logger.info(
+            "Job #%d: required_docs=%s missing_docs=%s misc_docs_keys=%s",
+            job.id, required_docs, missing_docs, list(docs.get("misc_docs", {}).keys()),
+        )
+
+        # Generate merged PDF — for email (attach) or external_url (send via WhatsApp)
+        merged_pdf_path = None
+        if (action == "email" and not missing_docs and proceed == "apply_now") or (action == "external_url" and not missing_docs):
+            try:
+                from app.document_generator import build_merged_pdf
+                merged_pdf_path = build_merged_pdf(
+                    required_docs=required_docs,
+                    docs=docs,
+                    job_id=job.id,
+                )
+            except Exception as e:
+                logger.warning("Failed to build merged PDF for job %s: %s", job.id, e)
 
         email_sent = False
         # Only send email if: action is email, recipient exists, no missing docs, AND proceed says apply_now
         if action == "email" and recip and not missing_docs and proceed == "apply_now":
-            attachment_paths = _build_attachment_list(required_docs, docs)
+            attachment_paths = _build_attachment_list(required_docs, docs, merged_pdf_path)
             from app.email_sender import send_email
             ok = send_email(
                 to=recip,
@@ -423,15 +459,35 @@ def batch_process_applications(
                 body=body,
                 attachments=attachment_paths or None,
             )
+            logger.info(
+                "Email condition met for job %s — calling send_email(to=%s, attachments=%d)",
+                job.id, recip, len(attachment_paths or []),
+            )
             email_sent = ok
             if not ok:
-                logger.warning("Email failed for job %s.", job.id)
+                logger.warning("Email FAILED for job %s — check email_sender logs above.", job.id)
+
+        # Send document via WhatsApp when action is external_url and docs are available
+        whatsapp_doc_sent = False
+        if action == "external_url" and not missing_docs and merged_pdf_path:
+            from app.whatsapp_notifier import send_whatsapp_document
+            caption = f"Your application documents for {job.title} at {job.company} — apply at: {match.apply_url or 'external link'}"
+            whatsapp_doc_sent = send_whatsapp_document(
+                file_path=merged_pdf_path,
+                caption=caption,
+            )
+            if whatsapp_doc_sent:
+                logger.info("WhatsApp document sent for job #%d (external_url).", job.id)
+            else:
+                logger.warning("WhatsApp document FAILED for job #%d.", job.id)
 
         email_sent_map[job.id] = email_sent
+        whatsapp_doc_sent_map[job.id] = whatsapp_doc_sent
         results_map[job.id] = {
             "action": action,
             "missing_docs": missing_docs,
         }
+        seen_recipient_titles.add(dup_key)
 
     # 4. Single LLM call to compose WhatsApp notifications (reads reason + scores)
     from app.apply_agent import batch_compose_whatsapp
@@ -439,6 +495,7 @@ def batch_process_applications(
         jobs_with_matches,
         email_sent_map,
         results_map,
+        user_id=user_id,
         model=model,
         provider=provider,
     )
@@ -468,6 +525,7 @@ def batch_process_applications(
             "action": r["action"],
             "email_sent": email_sent_map.get(job.id, False),
             "whatsapp_sent": whatsapp_ok,
+            "whatsapp_doc_sent": whatsapp_doc_sent_map.get(job.id, False),
             "missing_docs": r["missing_docs"],
             "status": new_status,
         })
@@ -489,11 +547,23 @@ def _doc_available(doc_type: str, docs: dict) -> bool:
         return bool(docs.get("education_docs"))
     if doc_type == "certification_cert":
         return bool(docs.get("certification_docs"))
-    return False
+    # Misc doc types (id_doc, drivers_license, proof_of_age, etc.) — check by key
+    return doc_type in docs.get("misc_docs", {})
 
 
-def _build_attachment_list(required_docs: list[str], docs: dict) -> list[str]:
-    """Build attachment file path list from required docs."""
+def _build_attachment_list(
+    required_docs: list[str],
+    docs: dict,
+    merged_pdf: str | None = None,
+) -> list[str]:
+    """Build attachment file path list from required docs.
+
+    If merged_pdf is provided, returns a single-element list — the merged
+    PDF already contains all required documents in order.
+    """
+    if merged_pdf and os.path.isfile(merged_pdf):
+        return [merged_pdf]
+
     paths = []
     if "resume" in required_docs and docs.get("resume_pdf"):
         paths.append(docs["resume_pdf"])
@@ -503,4 +573,9 @@ def _build_attachment_list(required_docs: list[str], docs: dict) -> list[str]:
         paths.extend(docs.get("education_docs", []))
     if "certification_cert" in required_docs:
         paths.extend(docs.get("certification_docs", []))
+    # Misc doc types — map from required_docs values (e.g. "id_doc") to file paths
+    misc = docs.get("misc_docs", {})
+    for doc_type in required_docs:
+        if doc_type in misc:
+            paths.append(misc[doc_type])
     return paths

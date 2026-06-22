@@ -60,6 +60,7 @@ class Settings:
         "GMAIL_APP_PASSWORD": "gmail-app-password",
         "LLM_PROVIDER": "llm-provider",
         "LLM_MODEL": "llm-model",
+        "WHATSAPP_API_KEY": "whatsapp-api-key"
     }
 
     @classmethod

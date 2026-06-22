@@ -1,7 +1,7 @@
 """
 Prefect 3 deployment registration + serve.
 
-Serves four independent deployments.
+Serves five deployments (4 standard + 1 webhook-triggered).
 When ``01-scraper`` runs via schedule, it auto-chains 02→03→04.
 Manual runs stop at scrape.
 
@@ -18,6 +18,7 @@ from prefect_flows.job_pipeline import (
     generate_matched_flow,
     apply_agent_flow,
 )
+from prefect_flows.whatsapp_job_flow import process_whatsapp_job
 
 _DEFAULTS = {
     "user_id": "ff0465b9-6512-4f47-8b5e-6f14a343a25d",
@@ -39,9 +40,9 @@ def build():
         # 1. Standalone scrape — auto-chains 02→03→04 when scheduled
         scrape_and_store.to_deployment(
             name="01-scraper",
-            schedules=[CronSchedule(cron="0 7-21/2 * * *", timezone="Africa/Harare")],
+            schedules=[CronSchedule(cron="0 7-21/1 * * *", timezone="Africa/Harare")],
             tags=["production", "scraping"],
-            description="Scrape job boards every 2 hours (7am-10pm). Auto-chains 02→03→04 when scheduled.",
+            description="Scrape job boards every hour (7am-10pm). Auto-chains 02→03→04 when scheduled.",
             parameters={
                 "site_names": _DEFAULTS["scrape_site_names"],
                 "max_pages": _DEFAULTS["scrape_max_pages"],
@@ -92,6 +93,15 @@ def build():
                 "generate_model": _DEFAULTS["generate_model"],
                 "generate_provider": _DEFAULTS["generate_provider"],
                 "limit": _DEFAULTS["job_limit"],
+            },
+        ),
+        # 5. WhatsApp image job (triggered by webhook, no schedule)
+        process_whatsapp_job.to_deployment(
+            name="05-whatsapp-image-job",
+            tags=["production", "whatsapp"],
+            description="Process a job posting image received via WhatsApp webhook.",
+            parameters={
+                "user_id": _DEFAULTS["user_id"],
             },
         ),
     )

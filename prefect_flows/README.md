@@ -91,11 +91,11 @@ Visit http://localhost:4200/deployments after starting `deployment.py`:
 
 | Deployment | Flow | Cron | Purpose |
 |-----------|------|------|---------|
-| `01-scraper-only` | `scrape-and-store` | `0 7-21/2 * * *` | Scrape job boards every 2 hours (7am-10pm) |
-| `02-matcher-only` | `match-jobs` | — *(manual)* | Batch-classify unscored jobs |
-| `03-generator-only` | `generate-matched` | — *(manual)* | Generate docs + apply (parse instructions → email / WhatsApp) |
-| `04-apply-agent` | `apply-agent` | — *(manual)* | Re-run apply step for matched jobs (e.g. after email failure) |
-| `job-pipeline` | `pull-and-process-jobs` | `0 7-21/2 * * *` | Match → generate → apply (every 2 hours, 7am-10pm) |
+| `01-scraper-only` | `scrape-and-store` | `0 7-21/2 * * *` | Ingest listings from external sources every 2 hours (7am-10pm) |
+| `02-matcher-only` | `match-jobs` | — *(manual)* | Batch-classify unscored listings |
+| `03-generator-only` | `generate-matched` | — *(manual)* | Generate docs + dispatch (parse instructions → email / WhatsApp) |
+| `04-apply-agent` | `apply-agent` | — *(manual)* | Re-run dispatch step for matched items (e.g. after email failure) |
+| `job-pipeline` | `pull-and-process-jobs` | `0 7-21/2 * * *` | Classify → generate → dispatch (every 2 hours, 7am-10pm) |
 
 ### Default parameters (set in `deployment.py`)
 
@@ -136,10 +136,10 @@ you care about, and it runs independently.  For example:
 - **Just regenerate** documents for already-matched jobs → run `03-generator-only`
 - **Re-run apply step** (e.g. email failed) → run `04-apply-agent`
 
-### Apply Agent (new in v4)
+### Apply Agent
 
 After generating documents (resume + cover letter), the pipeline parses
-`apply_instructions` from the scraped job posting and decides what to do:
+`apply_instructions` from the stored listing and decides what to do:
 
 | Action | Behaviour |
 |--------|-----------|
@@ -153,7 +153,7 @@ and extract structured data (recipient, subject, body, required document types).
 **WhatsApp API** — sends to your configured number via a local HTTP endpoint:
 ```
 POST http://localhost:8080/message/sendText/Apex_Web_Services
-Header: apikey: ApexWebServiceSecretKey2026
+Header: apikey: whatsapp_api_key
 Body: {"number": "263788667111@s.whatsapp.net", "text": "..."}
 ```
 

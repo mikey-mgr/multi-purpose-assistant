@@ -11,7 +11,7 @@ from uuid import UUID
 
 from core.database import (
     get_session, User, Resume, WorkExperience, Project,
-    Education, Certification, Skill, ScrapedJob,
+    Education, Certification, Skill, UserDocument, ScrapedJob,
     search_jobs_hybrid, search_projects, search_experiences,
 )
 from app.schemas import UserProfile, JobDescription
@@ -61,6 +61,10 @@ def assemble_user_profile(user_id: UUID, resume_id: UUID | None = None) -> UserP
             Skill.resume_id == resume.id
         ).all()
 
+        user_docs = session.query(UserDocument).filter(
+            UserDocument.user_id == user.id
+        ).all()
+
         return UserProfile(
             first_name=user.first_name,
             last_name=user.last_name,
@@ -70,6 +74,7 @@ def assemble_user_profile(user_id: UUID, resume_id: UUID | None = None) -> UserP
             location=f"{user.location_city or ''}, {user.location_country or ''}".strip(", "),
             professional_summary=resume.professional_summary,
             skills=[s.skill_name for s in skills],
+            documents={d.doc_type: d.label or d.doc_type for d in user_docs},
             work_experience=[{
                 "company": e.company_name,
                 "title": e.job_title,

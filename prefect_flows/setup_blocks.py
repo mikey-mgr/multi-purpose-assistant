@@ -23,6 +23,7 @@ SECRETS = [
     ("app-config-serpapi-api-key", "SERPAPI_API_KEY", "SerpAPI key"),
     ("app-config-gmail-address", "GMAIL_ADDRESS", "Gmail sending address"),
     ("app-config-gmail-app-password", "GMAIL_APP_PASSWORD", "Gmail app password"),
+    ("app-config-whatsapp-api-key", "WHATSAPP_API_KEY", "Whatsapp api key"),
 ]
 
 

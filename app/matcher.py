@@ -22,7 +22,7 @@ from core.database import (
     ScrapedJob,
     JobMatch,
     bulk_insert_job_matches,
-    get_unscored_jobs,
+    get_deduped_unscored_jobs,
 )
 from app.llm import generate_text
 
@@ -121,10 +121,22 @@ def _build_prompt(profile: dict, jobs: list[ScrapedJob]) -> str:
 
 def _parse_response(raw: str, jobs: list[ScrapedJob]) -> list[dict]:
     """Parse LLM JSON response into match decision dicts."""
+    # Strip markdown fences
     if "```json" in raw:
         raw = raw.split("```json")[1].split("```")[0].strip()
     elif "```" in raw:
         raw = raw.split("```")[1].split("```")[0].strip()
+
+    # Find the outermost JSON array
+    start = raw.find("[")
+    end = raw.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        logger.warning("No JSON array found in LLM response")
+        return []
+    raw = raw[start:end + 1]
+
+    # Remove control characters that break json.loads
+    raw = "".join(ch for ch in raw if ch >= " " or ch in "\n\r\t")
 
     try:
         parsed = json.loads(raw)
@@ -181,12 +193,13 @@ def batch_match_jobs(
         len(profile.get("projects", [])),
     )
 
-    jobs = get_unscored_jobs(user_id, limit=limit)
+    jobs, dedup_map = get_deduped_unscored_jobs(user_id, limit=limit)
     if not jobs:
         logger.info("No unscored jobs for user %s", user_id)
         return []
 
-    logger.info("Fetched %d unscored jobs (limit=%d)", len(jobs), limit)
+    logger.info("Fetched %d unscored jobs (limit=%d, %d duplicate groups collapsed)",
+                len(jobs), limit, len(dedup_map))
 
     prompt_text = _build_prompt(profile, jobs)
     logger.info("Sending %d jobs to LLM for batch classification ...", len(jobs))
@@ -208,12 +221,31 @@ def batch_match_jobs(
     for d in decisions:
         d["user_id"] = user_id
 
+    # Propagate match/reject to duplicate jobs (same title+company from other sites)
+    extra_matches = []
+    for d in decisions:
+        dups = dedup_map.get(d["job_id"], [])
+        for dup_id in dups:
+            extra_matches.append({
+                "job_id": dup_id,
+                "user_id": user_id,
+                "status": d["status"],
+                "score": d["score"],
+                "reason": d.get("reason"),
+                "matched_by": "llm_dedup",
+                "llm_raw": d.get("llm_raw"),
+            })
+    if extra_matches:
+        bulk_insert_job_matches(extra_matches)
+        logger.info("Propagated %d decisions to collapsed duplicate jobs", len(extra_matches))
+
     bulk_insert_job_matches(decisions)
 
     matched = sum(1 for d in decisions if d["status"] == "matched")
     logger.info(
-        "Matched %d jobs for user %s: %d accepted, %d rejected",
+        "Matched %d jobs for user %s: %d accepted, %d rejected (%d extra via dedup)",
         len(decisions), user_id, matched,
         len(decisions) - matched,
+        len(extra_matches),
     )
-    return decisions
+    return decisions + extra_matches

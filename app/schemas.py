@@ -19,6 +19,7 @@ class UserProfile(BaseModel):
     projects: list[dict] = Field(default_factory=list)
     education: list[dict] = Field(default_factory=list)
     certifications: list[dict] = Field(default_factory=list)
+    documents: dict[str, str] = Field(default_factory=dict)  # doc_type → label, e.g. {"id_doc": "National ID"}
 
 
 class JobDescription(BaseModel):

@@ -1,257 +1,90 @@
-# Automated Job Application Assistant
+# Automated Talent Matching Pipeline
 
-AI-powered pipeline that scrapes Zimbabwean job boards, retrieves relevant job postings, generates ATS-optimised resumes and cover letters, and produces ready-to-send PDF/DOCX documents.
+AI-powered pipeline that ingests unstructured listing data from regional employment platforms, performs relevance classification against candidate profiles, generates optimised documents, emails via Gmail SMTP, and sends WhatsApp notifications.
 
-## What this project actually is
-
-It's **two things that work together but don't depend on each other**:
-
-### 1. `app/` + `core/` — The Python Library
-This is the engine. It's just Python code you can import and run directly:
-```python
-from app.orchestrator import process_job_for_user
-process_job_for_user(user_id="xxx", job_id=123)   # runs now
-```
-It scrapes jobs → stores them in PostgreSQL → batch-classifies unscored jobs via LLM (matched/rejected) → for matched jobs: fetches user's profile → calls LLM to rewrite sections → builds RenderCV YAML → renders PDF → generates cover letter DOCX → snapshots everything in `generated_documents`.
-
-### 2. `prefect_flows/` — The Scheduler (Optional)
-Prefect is a separate background worker that calls the same `app.*` functions on a cron schedule. It adds:
-- **Scheduling**: runs the pipeline every 6 hours automatically
-- **Retries**: if an LLM call fails, retries with backoff
-- **Logging & observability**: UI at http://localhost:4200
-- **Secret management**: API keys stored in Prefect's encrypted database instead of `.env`
-
-You can run the library *without* Prefect (python script, cron job, notebook). Prefect is just a more robust way to automate it.
-
-### Architecture diagram
+## Architecture
 
 ```
-┌─────────────────────┐
-│ Job Scrapers (6h)   │  ← scrapers/*.py (iharare, vacancybox, vacancymail)
-│  unified_scraper    │
-└──────────┬──────────┘
-           │ raw job postings
-           ▼
-┌──────────────────────────────────────────────────────┐
-│ PostgreSQL (ai_assistant)                            │
-│  scraped_jobs, users, resumes, work_experience,      │
-│  education, certifications, projects, skills,         │
-│  prompts, job_matches                                │
-└────────────────────┬─────────────────────────────────┘
-                     │
-                     ▼
-┌──────────────────────────────────────────────────────┐
-│ Batch Matcher (app/matcher.py)                       │
-│  fetches unscored jobs → LLM classifies each         │
-│  as "matched" or "rejected" → persists to            │
-│  job_matches table                                   │
-│  (uses cheap model: openai/gpt-4o-mini)              │
-└────────────────────┬─────────────────────────────────┘
-                     │ only matched jobs proceed
-                     ▼
-┌──────────────────────────────────────────────────────┐
-│ Generator (app/orchestrator.py)                      │
-│  1. Assemble user profile (RAG)                      │
-│  2. Build prompt from template                       │
-│  3. Call LLM (gpt-4o / main model)                   │
-│  4. Generate PDF resume (rendercv)                   │
-│  5. Generate DOCX cover letter                       │
-│  6. Snapshot in generated_documents                  │
-└──────────────────────────────────────────────────────┘
+listing sources ──► scrapers ──► PostgreSQL ──► matcher ──► generator ──► email / WhatsApp
+                                    ▲                                    ▲
+                                    └── user profile (RAG) ───────────────┘
 ```
+
+Two decoupled stages:
+1. **Matcher** (`app/matcher.py`) — cheap LLM batch-classifies unscored jobs as matched/rejected
+2. **Generator** (`app/orchestrator.py`) — single LLM call per matched job outputs resume JSON + cover letter + apply_details. Renders PDF via RenderCV + DOCX cover letter. Saves to `job_matches` + `generated_documents`.
+
+Three entry points:
+- **Library** — import `app.*` directly (no Prefect needed)
+- **Prefect flows** — scheduled/triggered orchestration with retries + UI
+- **WhatsApp webhook** — FastAPI server receives job posting images via WhatsApp
 
 ## Project Structure
 
 ```
-├── app/                    # Core application logic (prefect imports from here)
-│   ├── config.py           # Settings (env vars → Prefect Secrets fallback)
-│   ├── schemas.py          # Pydantic models
-│   ├── llm.py              # LLM prompt building + API calls (OpenRouter / Gemini via OpenAI SDK)
-│   ├── rag.py              # RAG retrieval: profile assembly + hybrid job search
-│   ├── matcher.py          # batch_match_jobs() — classify unscored jobs via LLM
-│   ├── orchestrator.py     # process_job_for_user() — full pipeline
-│   ├── rendercv_renderer.py  # build_yaml_dict() + render() — PDF generation via rendercv
-│   ├── document_generator.py  # DOCX cover letter output (python-docx)
-│   └── utils.py            # safe_filename(), unique_path() — shared helpers
+├── app/                       # Core logic (imported by flows)
+│   ├── orchestrator.py        # process_job_for_user(), batch_process_applications()
+│   ├── matcher.py             # batch_match_jobs()
+│   ├── llm.py                 # LLM calls (OpenRouter / Gemini) + generate_text_multimodal()
+│   ├── rag.py                 # Profile assembly + hybrid search
+│   ├── rendercv_renderer.py   # YAML → PDF (RenderCV)
+│   ├── document_generator.py  # Cover letter DOCX
+│   ├── email_sender.py        # Gmail SMTP sender
+│   ├── whatsapp_notifier.py   # WhatsApp message sender
+│   ├── config.py              # Settings from env vars / Prefect secrets
+│   ├── schemas.py             # Pydantic models
+│   ├── apply_agent.py         # WhatsApp notification composition
+│   └── webhook_server.py      # FastAPI: POST /api/webhooks/whatsapp-image
 ├── core/
-│   ├── database.py         # SQLAlchemy models + CRUD + vector search helpers
-│   └── __init__.py
-├── scrapers/               # Job board scrapers (standalone CLI or unified)
-│   ├── iharare_scraper.py
-│   ├── vacancybox_scraper.py
-│   ├── vacancymail_scraper.py
-│   └── unified_scraper.py
-├── prefect_flows/          # Prefect deployment (decoupled from app)
-│   ├── job_pipeline.py     # Flows: pull-and-process-jobs, manual-generate
-│   └── deployment.py       # Build + register deployment
-├── db_configs/migrations/
-│   └── init.sql            # Full PostgreSQL schema + extensions
+│   └── database.py            # SQLAlchemy models + CRUD + vector search
+├── scrapers/                  # Data ingestion modules
+├── prefect_flows/
+│   ├── job_pipeline.py        # 4 flows: scrape-and-store, match-jobs, generate-matched, apply-agent
+│   ├── whatsapp_job_flow.py   # process-whatsapp-job: image→parse→match→generate→email→WhatsApp
+│   ├── deployment.py          # Register + serve all 5 deployments
+│   └── setup_blocks.py        # Prefect Secret blocks from .env
 ├── scripts/
-│   ├── seed_prompts.sql    # Raw SQL seed for system prompts
-│   └── seed_prompts.py     # Programmatic seed (upserts by name)
-└── requirements.txt
+│   └── seed_prompts.py        # Programmatic prompt seed (upserts)
+└── db_configs/migrations/
+    └── init.sql               # Full schema + pgvector
 ```
 
-## Setup
+## Quick Setup
 
-### 1. Dependencies
-
+### 1. Database
 ```bash
-pip install -r requirements.txt
-```
-
-**Two conda environments (recommended):**
-
-| Env | Installs | Purpose |
-|-----|----------|---------|
-| `data_eng` | `requirements.txt` minus `prefect` | Run scrapers, app logic, tests |
-| `prefect_env` | `requirements.txt` (full) | Run Prefect server + workers |
-
-### 2. Database
-
-Requires PostgreSQL 15+ with `pgvector` installed.
-
-```bash
-# Create DB, extensions, tables, indexes, triggers, and the RAG view
 psql -U postgres -f db_configs/migrations/init.sql
 ```
 
-### 3. Seed system prompts
+### 2. Environment (`.env`)
+```
+DB_CONN_URI=postgresql://postgres:YOUR_PASSWORD@localhost:5432/ai_assistant
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-...
+GEMINI_API_KEY=...
+LLM_MODEL=openai/gpt-4o
+```
 
+### 3. Seed prompts
 ```bash
-# SQL route
-psql -U postgres -d ai_assistant -f scripts/seed_prompts.sql
-
-# Or Python route
 python scripts/seed_prompts.py
 ```
 
-### 4. Environment variables (`.env`)
+## Deployments
 
-```
-DB_CONN_URI=postgresql://postgres:YOUR_PASSWORD@localhost:5432/ai_assistant
-LLM_PROVIDER=openrouter                       # "openrouter" or "gemini"
-OPENROUTER_API_KEY=sk-or-...                  # required for openrouter
-GEMINI_API_KEY=...                            # required for gemini
-LLM_MODEL=openai/gpt-4o                       # model for generation (matcher overrides this)
-EMBEDDING_MODEL=text-embedding-3-small
-PREFECT_API_URL=http://localhost:4200/api
-```
+Run `python prefect_flows/deployment.py` to serve all 5 deployments:
 
-## Pipeline (end-to-end)
-
-```
-scrapers ──► scraped_jobs ──► orchestator ──► LLM (per-section rewrites)
-                              │                    │
-                              │                    ▼
-                              │           build_yaml_dict()
-                              │           (DB data + LLM overrides)
-                              │                    │
-                              │                    ▼
-                              │           rendercv render ──► PDF
-                              │                    │
-                              │                    ▼
-                              │           generated_documents table
-                              │           (snapshot: YAML + PDF path +
-                              │            prompt_name + model + tokens)
-```
-
-### Source of truth vs generated artifacts
-
-| What | Stored in | Purpose |
-|------|-----------|---------|
-| Raw profile data | `users`, `work_experience`, `education`, `projects`, `skills`, `certifications` | Source of truth — never modified by the pipeline |
-| Rewritten sections | LLM output parsed into JSON | Per-job ATS optimisation, discarded after YAML is built |
-| Final resume YAML + PDF | `generated_documents` table + `data/rendercv_output/` | Snapshot of exactly what was sent to which job |
-
-The child tables (`work_experience`, `education`, etc.) are **never overwritten** by the generation pipeline. Each run creates a new row in `generated_documents` linking `resume_id` (the source version) and `job_id` (the target job).
-
-## Decoupled pipeline: matcher → generator
-
-The pipeline runs in **two decoupled stages**, each with its own LLM call:
-
-1. **Batch Matcher** (`app/matcher.py::batch_match_jobs()`) — fetches unscored job postings, builds a user profile summary (skills, experience titles, education, project tech stacks), sends all jobs to the LLM in one prompt, and persists decisions to `job_matches` table. Uses a **cheap model** (`openai/gpt-4o-mini` by default).
-2. **Generator** (`app/orchestrator.py::process_job_for_user()`) — runs only for jobs where `job_matches.status == 'matched'`. Generates the ATS-optimised resume + cover letter using the **main model** (`LLM_MODEL`).
-
-This avoids wasting the expensive model on irrelevant jobs.
-
-### Flow parameters (Prefect UI)
-
-When you view the deployment at http://localhost:4200 or start a manual flow run,
-you can set:
-
-| Parameter | Default | Purpose |
-|-----------|---------|---------|
-| `match_model` | `openai/gpt-4o-mini` | Model for batch matching |
-| `match_provider` | *(→ LLM_PROVIDER)* | Provider for matching (`openrouter` / `gemini`) |
-| `generate_model` | *(→ LLM_MODEL)* | Model for resume + cover letter |
-| `generate_provider` | *(→ LLM_PROVIDER)* | Provider for generation |
-| `match_limit` | 50 | Max jobs to score per run |
-| `job_limit` | 10 | Max matched jobs to process |
-
-### Provider override per stage
-
-Each stage can target a different provider and model. Examples:
-
-| Scenario | `match_provider` | `match_model` | `generate_provider` | `generate_model` |
-|----------|-----------------|----------------|--------------------|------------------|
-| Default | *(→ LLM_PROVIDER)* | `openai/gpt-4o-mini` | *(→ LLM_PROVIDER)* | *(→ LLM_MODEL)* |
-| Match via Gemini, generate via OpenRouter GPT-4o | `gemini` | `gemini-2.0-flash` | `openrouter` | `openai/gpt-4o` |
-| All via OpenRouter custom models | *(→ openrouter)* | `anthropic/claude-3-haiku` | *(→ openrouter)* | `openai/gpt-4o` |
-
-## Usage
-
-### Run scrapers (standalone)
-
-```bash
-python -m scrapers.iharare_scraper
-python -m scrapers.vacancymail_scraper
-python -m scrapers.vacancybox_scraper
-python -m scrapers.unified_scraper    # all three
-```
-
-See `scrapers/README.md` for detailed scraper docs.
-
-### Run generation pipeline (one shot, no Prefect)
-
-```bash
-python -c "
-from app.orchestrator import process_job_for_user
-docs = process_job_for_user(
-    user_id='YOUR_USER_UUID',
-    job_id=123,
-    model='openai/gpt-4o',          # optional: override LLM model
-    provider='openrouter',          # optional: 'openrouter' or 'gemini'
-)
-print(f'Generated {len(docs)} documents')
-"
-```
-
-## API Keys & Security
-
-### Dependency pinning
-
-Prefect 3.7.x requires `fastapi<0.115.0` (Starlette < 1.0.0) for `PrefectRouter` compatibility.
-These are pinned in `requirements.txt`.
-
-### ` .env` is NOT safe for production
-
-The `.env` file stores keys as **plaintext on disk**. Anyone with access to your machine or repo backup can read them. Use it only for local testing.
-
-### Prefect Secret Blocks (production)
-
-Prefect stores secrets in its own database (SQLite or PostgreSQL), encrypted at rest. Only the Prefect server API can read them — your code never sees the raw `.env` file.
+| Name | Schedule | Description |
+|------|----------|-------------|
+| `01-scraper` | `0 7-21/2 * * *` | Ingest listings from regional platforms. Auto-chains 02→03→04 when scheduled. Manual runs stop at ingest. |
+| `02-matcher` | — | Batch-classify unscored jobs |
+| `03-generator` | — | Generate docs for matched jobs |
+| `04-apply-agent` | — | Send emails + WhatsApp notifications |
+| `05-whatsapp-image-job` | — | Parse job image from webhook → apply → notify (triggered via FastAPI) |
 
 ## Prefect 3 Setup
 
-The pipeline uses **Prefect 3.x**. Some commands changed from v2.
-
-> **Note**: If `conda run` fails, use the full Python path directly:
-> ```
-> & "C:\Users\mmash\.conda\envs\prefect_env\python.exe" -m prefect server start
-> ```
-
-### Step-by-step
+Requires two conda environments: `prefect_env` (full stack) and `data_eng` (library only).
 
 **Terminal 1 — API server** (keep running):
 ```bash
@@ -266,36 +99,94 @@ conda activate prefect_env
 prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api
 python -m prefect_flows.setup_blocks
 ```
-Fill in real API keys in `.env` first — the script reads them and creates
-[Prefect Secret blocks](http://localhost:4200/blocks) (one per key).
 
-**Terminal 3 — Scheduled runner** (keep running):
+**Terminal 3 — Worker** (keep running):
 ```bash
 conda activate prefect_env
 python -m prefect_flows.deployment
 ```
-Registers a deployment with `0 */6 * * *` cron (Africa/Harare) and starts
-an in-process runner. Scheduled flow runs execute inside this process.
+Registers all 5 deployments and starts an in-process runner.
 
 **Manual run** (any terminal):
 ```bash
 conda activate prefect_env
-python -m prefect_flows.job_pipeline --manual <user_id> <job_id>
+prefect deployment run 01-scraper
+prefect deployment run 02-matcher
+prefect deployment run 05-whatsapp-image-job
 ```
 
-### How your code reads them
+**Conda environments:**
+| Env | Installs | Use for |
+|-----|----------|---------|
+| `data_eng` | `requirements.txt` minus `prefect` | App logic, scrapers, tests |
+| `prefect_env` | `requirements.txt` (full) | Prefect server + workers + deployment |
 
-```python
-from app.config import settings
-settings = settings.from_prefect()  # reads Prefect blocks first, falls back to .env
-print(settings.OPENROUTER_API_KEY)  # from Prefect block or .env
+## WhatsApp Job Webhook
+
+Start the FastAPI server:
+```bash
+python -m app.webhook_server          # default port 8000
 ```
 
-### What to do with `.env`
+Your WhatsApp host sends:
+```http
+POST http://localhost:8055/api/webhooks/whatsapp-image
+apikey: your_api_key
 
-1. Fill in real values in `.env` for local development
-2. Once everything works via Prefect, **delete `.env`** for production
-3. The `.env` file is already in `.gitignore` — it will never be committed
+{"imageBase64": "<base64>", "mimetype": "image/jpeg"}
+```
+
+The server validates the API key, image size (≤10MB) and type (jpeg/png/webp/gif), then triggers the `process-whatsapp-job` flow which:
+1. Sends image + user profile to Gemini vision in one LLM call
+2. Parses job fields, match score, resume overrides, cover letter, apply_details, and WhatsApp text
+3. Inserts ScrapedJob (`site='whatsapp'`) + JobMatch
+4. Renders resume PDF + cover letter DOCX
+5. Emails application if `proceed=apply_now` + action=email
+6. Sends WhatsApp notification with score + gaps + outcome
+7. Sets status to `applied` or `waiting` (needs_docs/needs_info)
+
+On failure at any step, an error WhatsApp is sent back.
+
+### Per-job flow
+
+```
+01-scraper (cron) ──► 02-matcher ──► 03-generator ──► 04-apply-agent
+                          ▲                                  ▲
+                          │                                  │
+05-whatsapp-image-job ────┘                                  │
+(webhook trigger)                                            │
+                                                             ▼
+                                                    WhatsApp notification
+```
+
+## Key Modules
+
+| Module | What it does |
+|--------|-------------|
+| `core.database` | ORM models, CRUD, pgvector hybrid search, prompt management |
+| `app.llm` | `generate_text()`, `generate_text_multimodal()`, `generate_embedding()` — routes through OpenRouter or Gemini |
+| `app.orchestrator` | `process_job_for_user()` — RAG → LLM → YAML → PDF → snapshot |
+| `app.rag` | Profile assembly + hybrid (keyword + semantic) job search |
+| `app.rendercv_renderer` | YAML dict → RenderCV PDF |
+| `app.email_sender` | Gmail SMTP (no test redirect) |
+| `app.whatsapp_notifier` | WhatsApp Cloud API messages |
+
+## Provider Override
+
+Each stage targets an independent provider + model:
+
+| Scenario | match_provider | match_model | generate_provider | generate_model |
+|----------|---------------|-------------|-------------------|----------------|
+| Default | *(→ LLM_PROVIDER)* | `openai/gpt-4o-mini` | *(→ LLM_PROVIDER)* | *(→ LLM_MODEL)* |
+| Match via Gemini, generate via GPT-4o | `gemini` | `gemini-2.0-flash` | `openrouter` | `openai/gpt-4o` |
+
+## Source of Truth vs Generated Artifacts
+
+| What | Stored in |
+|------|-----------|
+| Raw profile | `users`, `work_experience`, `education`, `projects`, `skills`, `certifications` |
+| Per-job rewrite | LLM output (discarded after YAML) |
+| Final resume PDF | `generated_documents` table + `data/rendercv_output/` |
 
 ## Hybrid Search
 
@@ -303,43 +194,15 @@ print(settings.OPENROUTER_API_KEY)  # from Prefect block or .env
 score = ts_rank(fulltext_keywords) * 0.5 + (1 - cosine_distance(embedding)) * 0.5
 ```
 
-- **Keyword**: PostgreSQL `tsvector` with GIN index, auto-populated via trigger on `scraped_jobs`
-- **Semantic**: `vector(1536)` column using pgvector cosine distance (populated async)
-- Falls back gracefully to pure full-text if no embedding available
+Keyword: PostgreSQL `tsvector` with GIN index. Semantic: `vector(1536)` pgvector cosine distance.
 
-## RenderCV Setup
+## Prompts
 
-PDF resumes use [RenderCV](https://github.com/sinaatalay/rendercv) with the `harvard` theme.
+System prompts stored in DB `prompts` table and seeded via `scripts/seed_prompts.py`:
 
-```bash
-pip install rendercv
-rendercv --version          # should show 2.8.x
-```
-
-RenderCV requires [Typst](https://github.com/typst/typst/releases) for PDF generation.
-Add `typst.exe` to your PATH (Windows) or `brew install typst` (macOS).
-
-Verify: `typst --version`
-
-### Output structure
-
-```
-data/
-  rendercv_output/
-    {user_snake_case_name}_cv.pdf      # final PDF resume
-    {user_snake_case_name}_cv.yaml     # generated YAML
-  cover_letters/
-    cover_letter_{job_id}_*.docx       # cover letter
-```
-
-## Key Modules
-
-| Module | What it does |
-|--------|-------------|
-| `core.database` | SQLAlchemy ORM models, `insert_jobs()`, vector search, prompt CRUD, `job_matches` CRUD |
-| `app.llm` | `generate_text()` + `generate_embedding()` — routes through OpenRouter or Gemini via OpenAI SDK |
-| `app.rag` | `assemble_user_profile()` + `find_relevant_jobs()` — retrieval |
-| `app.rendercv_renderer` | `build_yaml_dict()` + `render()` — YAML assembly + PDF generation |
-| `app.orchestrator` | `process_job_for_user()` — full pipeline (RAG → LLM → YAML → PDF → snapshot) |
-| `app.document_generator` | Cover letter DOCX output |
-| `prefect_flows` | Scheduled + manual Prefect flow definitions |
+| Prompt | Purpose |
+|--------|---------|
+| `job_matcher_v1` | Batch-classify unscored jobs |
+| `ats_and_cover_v1` | Resume JSON + cover letter + apply_details + gap analysis |
+| `whatsapp_notify_batch_v1` | Compose WhatsApp notifications for batch results |
+| `whatsapp_image_job_v1` | Parse job image → match → generate → WhatsApp text (multimodal) |

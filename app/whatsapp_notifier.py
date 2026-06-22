@@ -1,20 +1,24 @@
 """
 WhatsApp notifier via local API.
 Sends a "composing" presence signal, then immediately sends the text message.
+Also supports sending document files (PDF, DOCX, etc.) via sendMedia endpoint.
 """
 
+import base64
 import logging
+import os
 import random
 
 import requests
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 _WHATSAPP_URL = "http://localhost:8080/message/sendText/Apex_Web_Services"
+_MEDIA_URL = "http://localhost:8080/message/sendMedia/Apex_Web_Services"
 _PRESENCE_URL = "http://localhost:8080/chat/sendPresence/Apex_Web_Services"
-_WHATSAPP_API_KEY = "ApexWebServiceSecretKey2026"
+_WHATSAPP_API_KEY = settings.WHATSAPP_API_KEY
 _WHATSAPP_NUMBER = "263788667111@s.whatsapp.net"
-
 
 def send_whatsapp(
     text: str,
@@ -44,6 +48,11 @@ def send_whatsapp(
     -------
     bool — True if sent successfully, False otherwise.
     """
+    
+    if not _WHATSAPP_API_KEY:
+        logger.error("Whatsapp API Key not configured (WHATSAPP_API_KEY).")
+        return False
+
     if not text:
         logger.warning("WhatsApp message text is empty — skipping.")
         return False
@@ -91,4 +100,66 @@ def send_whatsapp(
         return True
     except requests.RequestException as e:
         logger.error("WhatsApp API error: %s", e)
+        return False
+
+
+def send_whatsapp_document(
+    file_path: str,
+    caption: str = "",
+    mimetype: str = "application/pdf",
+) -> bool:
+    """
+    Send a document file via WhatsApp using the Evolution API sendMedia endpoint.
+
+    Parameters
+    ----------
+    file_path : str
+        Path to the file on disk.
+    caption : str
+        Optional caption text sent with the document.
+    mimetype : str
+        MIME type of the file (default application/pdf).
+
+    Returns
+    -------
+    bool — True if sent successfully, False otherwise.
+    """
+    if not _WHATSAPP_API_KEY:
+        logger.error("Whatsapp API Key not configured (WHATSAPP_API_KEY).")
+        return False
+
+    if not file_path or not os.path.isfile(file_path):
+        logger.warning("WhatsApp document file not found: %s", file_path)
+        return False
+
+    try:
+        with open(file_path, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode("utf-8")
+    except OSError as e:
+        logger.error("Failed to read document for WhatsApp: %s", e)
+        return False
+
+    file_name = os.path.basename(file_path)
+
+    headers = {
+        "apikey": _WHATSAPP_API_KEY,
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "number": _WHATSAPP_NUMBER,
+        "mediatype": "document",
+        "mimetype": mimetype,
+        "caption": caption,
+        "media": encoded,
+        "fileName": file_name,
+    }
+
+    try:
+        resp = requests.post(_MEDIA_URL, json=payload, headers=headers, timeout=60)
+        resp.raise_for_status()
+        logger.info("WhatsApp document sent: %s (status=%s)", file_name, resp.status_code)
+        return True
+    except requests.RequestException as e:
+        logger.error("WhatsApp document send error: %s", e)
         return False

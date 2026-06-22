@@ -93,6 +93,18 @@ CREATE TABLE IF NOT EXISTS certifications (
     document_path       TEXT   -- path to file in data/certifications/
 );
 
+-- ── User Documents (ID, driver's license, proof of age, etc.) ──────────
+
+CREATE TABLE IF NOT EXISTS user_documents (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
+    doc_type    VARCHAR(50) NOT NULL,       -- 'id_doc', 'drivers_license', 'proof_of_age', etc.
+    file_path   TEXT NOT NULL,              -- path relative to project root, e.g. data/misc/id_card.pdf
+    label       VARCHAR(200),               -- optional human-readable label
+    created_at  TIMESTAMP WITH TIME ZONE DEFAULT timezone('Africa/Harare', CURRENT_TIMESTAMP),
+    UNIQUE(user_id, doc_type)               -- one doc of each type per user
+);
+
 -- ── Skills ────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS skills (
@@ -221,11 +233,13 @@ ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS apply_body        TEXT;
 ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS apply_url         TEXT;
 ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS required_docs     TEXT;
 ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS proceed           VARCHAR(20);
+ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS expiry_date       DATE;
+ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS merged_pdf        BOOLEAN DEFAULT false;
 
 -- Update status constraint to include 'waiting' (for existing tables)
 ALTER TABLE job_matches DROP CONSTRAINT IF EXISTS job_matches_status_check;
 ALTER TABLE job_matches ADD CONSTRAINT job_matches_status_check
-    CHECK (status IN ('matched', 'rejected', 'generated', 'applied', 'waiting'));
+    CHECK (status IN ('matched', 'rejected', 'generated', 'applied', 'waiting', 'suspended', 'duplicate'));
 
 -- ── RAG View: Consolidated Resume Snapshots ──────────────────────────
 

@@ -6,6 +6,8 @@ and composes natural WhatsApp messages via a single batch LLM call.
 
 import json
 import logging
+import uuid
+
 from app.llm import generate_text
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,7 @@ def _build_whatsapp_entry(
     match,
     email_sent: bool,
     missing_docs: list[str],
+    available_docs: dict[str, str] | None = None,
 ) -> dict:
     """Build a single notification entry from stored DB data."""
     return {
@@ -41,6 +44,7 @@ def _build_whatsapp_entry(
         "apply_url": match.apply_url or "",
         "email_sent": email_sent,
         "missing_docs": missing_docs,
+        "available_docs": available_docs or {},
     }
 
 
@@ -48,6 +52,7 @@ def batch_compose_whatsapp(
     jobs_with_matches: list[dict],
     email_sent_map: dict[int, bool],
     results_map: dict[int, dict],
+    user_id: str | None = None,
     model: str | None = None,
     provider: str | None = None,
 ) -> list[str]:
@@ -59,13 +64,26 @@ def batch_compose_whatsapp(
 
     Returns list of notification_text strings in the same order as jobs_with_matches.
     """
+    available_docs: dict[str, str] = {}
+    if user_id:
+        from core.database import get_session, UserDocument
+        session = get_session()
+        try:
+            uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+            rows = session.query(UserDocument).filter(UserDocument.user_id == uid).all()
+            available_docs = {d.doc_type: d.label or d.doc_type for d in rows}
+        except Exception:
+            logger.warning("Failed to fetch available docs for WhatsApp composer", exc_info=True)
+        finally:
+            session.close()
+
     entries = []
     for item in jobs_with_matches:
         job = item["job"]
         match = item["match"]
         email_sent = email_sent_map.get(job.id, False)
         missing_docs = results_map.get(job.id, {}).get("missing_docs", [])
-        entries.append(_build_whatsapp_entry(job, match, email_sent, missing_docs))
+        entries.append(_build_whatsapp_entry(job, match, email_sent, missing_docs, available_docs))
 
     batch_input_json = json.dumps(entries, indent=2)
     logger.info("Composing WhatsApp batch notification for %d jobs.", len(entries))

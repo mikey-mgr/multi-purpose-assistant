@@ -18,7 +18,14 @@ from prefect import flow, task, get_run_logger
 from app.config import settings
 from app.matcher import batch_match_jobs
 from app.orchestrator import process_job_for_user, batch_process_applications
-from core.database import get_matched_unprocessed_jobs, update_job_match_status
+from core.database import (
+    get_matched_unprocessed_jobs,
+    update_job_match_status,
+    normalize_job_title,
+    get_session,
+    ScrapedJob,
+    JobMatch,
+)
 from prefect.context import FlowRunContext
 from scrapers.unified_scraper import UnifiedJobScraper
 
@@ -28,13 +35,12 @@ logger = logging.getLogger(__name__)
 # ── Tasks ──────────────────────────────────────────────────────────────
 
 @task(retries=2, retry_delay_seconds=30)
-def run_scrapers(
+def scrape_jobs_task(
     site_names: list[str] | None = None,
     max_pages: dict = {},
-) -> int:
-    """Scrape specified job boards and insert new jobs into PostgreSQL."""
-    from core.database import init_db, insert_jobs
-
+) -> "pd.DataFrame | None":
+    """Scrape job boards and return DataFrame. Insert happens in a separate task."""
+    import pandas as pd  # noqa: F401 — keep for type hint
     run_logger = get_run_logger()
     site_names = site_names or ["iharare", "vacancybox", "vacancymail"]
     run_logger.info("Scraping job boards %s (max_pages=%s) ...", site_names, max_pages)
@@ -45,11 +51,20 @@ def run_scrapers(
         **kwargs,
     )
     if jobs_df.empty:
-        get_run_logger().warning("No jobs found from any site.")
-        return 0
+        run_logger.warning("No jobs found from any site.")
+        return None
+    run_logger.info("Scraped %d jobs.", len(jobs_df))
+    return jobs_df
+
+
+@task(retries=3, retry_delay_seconds=15)
+def store_jobs_task(jobs_df: "pd.DataFrame") -> int:
+    """Insert scraped jobs into PostgreSQL. Retries independently of scraping."""
+    from core.database import init_db, insert_jobs
+    run_logger = get_run_logger()
     init_db()
     count = insert_jobs(jobs_df.to_dict("records"))
-    get_run_logger().info("Inserted %d new jobs into database.", count)
+    run_logger.info("Inserted %d new jobs into database.", count)
     return count
 
 
@@ -102,6 +117,46 @@ def generate_application(
 
 
 @task
+def dedup_generated_jobs(user_id: str) -> int:
+    """Post-generation dedup sweep: for duplicate (title, company) groups,
+    keep the first generated job and mark the rest as 'duplicate'."""
+    from collections import defaultdict
+    run_logger = get_run_logger()
+    session = get_session()
+    try:
+        rows = session.query(JobMatch, ScrapedJob).join(
+            ScrapedJob, JobMatch.job_id == ScrapedJob.id
+        ).filter(
+            JobMatch.user_id == user_id,
+            JobMatch.status == "generated",
+        ).all()
+
+        groups: dict[tuple[str, str], list[tuple[JobMatch, ScrapedJob]]] = defaultdict(list)
+        for match, job in rows:
+            key = (normalize_job_title(job.title or ""), (job.company or "").strip().lower())
+            groups[key].append((match, job))
+
+        dedup_count = 0
+        for key, group in groups.items():
+            if len(group) <= 1:
+                continue
+            # Keep first (lowest job_id), mark rest as duplicate
+            group.sort(key=lambda x: x[0].job_id)
+            for match, _ in group[1:]:
+                match.status = "duplicate"
+                session.commit()
+                dedup_count += 1
+                run_logger.info(
+                    "Dedup: marked JobMatch #%d (job #%d) as duplicate (same title+company as #%d)",
+                    match.id, match.job_id, group[0][0].job_id,
+                )
+
+        return dedup_count
+    finally:
+        session.close()
+
+
+@task
 def mark_processed(result: dict) -> None:
     """Log result."""
     get_run_logger().info(
@@ -136,7 +191,11 @@ def scrape_and_store(
 ):
     """Scrape job boards then auto-chain 02→03→04 if triggered by schedule."""
     run_logger = get_run_logger()
-    count = run_scrapers(site_names=site_names, max_pages=max_pages)
+    jobs_df = scrape_jobs_task(site_names=site_names, max_pages=max_pages)
+    if jobs_df is None:
+        run_logger.info("No jobs scraped.")
+        return
+    count = store_jobs_task(jobs_df)
     run_logger.info("Scrape complete — %d new jobs inserted.", count)
 
     # Auto-chain downstream flows only when triggered by schedule
@@ -251,6 +310,10 @@ def generate_matched_flow(
 
     for r in results:
         mark_processed(r)
+
+    dedup_count = dedup_generated_jobs(user_id)
+    if dedup_count:
+        run_logger.info("Post-generation dedup: %d duplicate jobs marked.", dedup_count)
 
 
 @flow(
