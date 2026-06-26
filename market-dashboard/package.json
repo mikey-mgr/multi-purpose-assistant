@@ -1,0 +1,16 @@
+{
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "observable preview",
+    "build": "observable build",
+    "deploy": "gh-pages --dest docs --dist dist",
+    "export-data": "cd .. && conda run -n prefect_env python market-dashboard/scripts/export_data.py"
+  },
+  "dependencies": {
+    "@observablehq/framework": "^1"
+  },
+  "devDependencies": {
+    "gh-pages": "^6"
+  }
+}
