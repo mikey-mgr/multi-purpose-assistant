@@ -22,6 +22,7 @@ from core.database import (
     ScrapedJob,
     JobMatch,
     bulk_insert_job_matches,
+    save_job_enrichments,
     get_deduped_unscored_jobs,
 )
 from app.llm import generate_text
@@ -103,7 +104,7 @@ def _build_prompt(profile: dict, jobs: list[ScrapedJob]) -> str:
         "## Jobs",
     ]
     for i, job in enumerate(jobs, 1):
-        desc = (job.description or "")[:600]
+        desc = (job.description or "")
         lines.extend([
             f"### Job {i}",
             f"- job_index: {i}",
@@ -112,6 +113,11 @@ def _build_prompt(profile: dict, jobs: list[ScrapedJob]) -> str:
             f"- description: {desc}",
             f"- location: {job.location}",
             f"- job_type: {job.job_type}",
+            f"- compensation: {job.compensation or 'Not listed'}",
+            f"- category: {job.category or 'Not listed'}",
+            f"- remote: {job.remote or 'Not listed'}",
+            f"- date_posted: {job.date_posted or 'Not listed'}",
+            f"- site: {job.site}",
             "",
         ])
 
@@ -119,8 +125,14 @@ def _build_prompt(profile: dict, jobs: list[ScrapedJob]) -> str:
     return "\n".join(lines)
 
 
-def _parse_response(raw: str, jobs: list[ScrapedJob]) -> list[dict]:
-    """Parse LLM JSON response into match decision dicts."""
+def _parse_response(raw: str, jobs: list[ScrapedJob]) -> tuple[list[dict], list[dict]]:
+    """
+    Parse LLM JSON response into match decision dicts + enrichment dicts.
+
+    Returns (decisions, enrichments) where:
+      decisions — list of dicts for job_matches table
+      enrichments — list of dicts for job_enrichments table
+    """
     # Strip markdown fences
     if "```json" in raw:
         raw = raw.split("```json")[1].split("```")[0].strip()
@@ -132,7 +144,7 @@ def _parse_response(raw: str, jobs: list[ScrapedJob]) -> list[dict]:
     end = raw.rfind("]")
     if start == -1 or end == -1 or end <= start:
         logger.warning("No JSON array found in LLM response")
-        return []
+        return [], []
     raw = raw[start:end + 1]
 
     # Remove control characters that break json.loads
@@ -142,12 +154,13 @@ def _parse_response(raw: str, jobs: list[ScrapedJob]) -> list[dict]:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
         logger.warning("Failed to parse LLM match response as JSON")
-        return []
+        return [], []
 
     if not isinstance(parsed, list):
-        return []
+        return [], []
 
     decisions = []
+    enrichments = []
     for item in parsed:
         idx = item.get("job_index", 0) - 1
         if 0 <= idx < len(jobs):
@@ -160,13 +173,39 @@ def _parse_response(raw: str, jobs: list[ScrapedJob]) -> list[dict]:
                 "matched_by": "llm",
                 "llm_raw": json.dumps(item),
             })
-    return decisions
+            # Extract enrichment
+            enc = item.get("enrichment") or {}
+            salary = enc.get("salary_range") or {}
+            enrichments.append({
+                "job_id": jobs[idx].id,
+                "technical_skills": enc.get("technical_skills"),
+                "soft_skills": enc.get("soft_skills"),
+                "required_qualifications": enc.get("required_qualifications"),
+                "required_experience": enc.get("required_experience"),
+                "min_salary": _to_float(salary.get("min")),
+                "max_salary": _to_float(salary.get("max")),
+                "currency": salary.get("currency"),
+                "normalized_category": enc.get("category"),
+                "job_type": enc.get("job_type"),
+                "remote_eligible": enc.get("remote_eligible"),
+            })
+    return decisions, enrichments
+
+
+def _to_float(v) -> float | None:
+    """Safely convert a value to float or None."""
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
 
 
 def batch_match_jobs(
     user_id: str,
     limit: int = 50,
-    model: str = "openai/gpt-4o-mini",
+    model: str = "openai/gpt-oss-120b:free",
     provider: str | None = None,
 ) -> list[dict]:
     """
@@ -212,7 +251,7 @@ def batch_match_jobs(
     )
     raw = result.get("content", "")
 
-    decisions = _parse_response(raw, jobs)
+    decisions, enrichments = _parse_response(raw, jobs)
     if not decisions:
         logger.warning("Matcher returned 0 decisions for %d jobs", len(jobs))
         return []
@@ -223,6 +262,7 @@ def batch_match_jobs(
 
     # Propagate match/reject to duplicate jobs (same title+company from other sites)
     extra_matches = []
+    extra_enrichments = []
     for d in decisions:
         dups = dedup_map.get(d["job_id"], [])
         for dup_id in dups:
@@ -235,11 +275,27 @@ def batch_match_jobs(
                 "matched_by": "llm_dedup",
                 "llm_raw": d.get("llm_raw"),
             })
+        # Propagate enrichment to duplicate jobs too
+        enc = next((e for e in enrichments if e["job_id"] == d["job_id"]), None)
+        if enc:
+            for dup_id in dups:
+                dup_enc = dict(enc)
+                dup_enc["job_id"] = dup_id
+                extra_enrichments.append(dup_enc)
+
     if extra_matches:
         bulk_insert_job_matches(extra_matches)
         logger.info("Propagated %d decisions to collapsed duplicate jobs", len(extra_matches))
 
     bulk_insert_job_matches(decisions)
+
+    # Save enrichments (includes duplicates)
+    all_enrichments = enrichments + extra_enrichments
+    if all_enrichments:
+        for e in all_enrichments:
+            e["enrichment_model"] = model
+        save_job_enrichments(all_enrichments)
+        logger.info("Saved enrichment data for %d jobs", len(all_enrichments))
 
     matched = sum(1 for d in decisions if d["status"] == "matched")
     logger.info(

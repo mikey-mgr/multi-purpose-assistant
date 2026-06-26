@@ -219,7 +219,7 @@ CREATE TABLE IF NOT EXISTS job_matches (
     status     VARCHAR(20) NOT NULL CHECK (status IN ('matched', 'rejected', 'generated', 'applied', 'waiting')),
     score      INTEGER CHECK (score >= 0 AND score <= 100),
     reason     TEXT,
-    matched_by VARCHAR(20) DEFAULT 'llm' CHECK (matched_by IN ('llm', 'keyword_fallback')),
+    matched_by VARCHAR(20) DEFAULT 'llm' CHECK (matched_by IN ('llm', 'keyword_fallback', 'llm_dedup')),
     llm_raw    TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('Africa/Harare', CURRENT_TIMESTAMP),
     UNIQUE(job_id, user_id)
@@ -240,6 +240,28 @@ ALTER TABLE job_matches ADD COLUMN IF NOT EXISTS merged_pdf        BOOLEAN DEFAU
 ALTER TABLE job_matches DROP CONSTRAINT IF EXISTS job_matches_status_check;
 ALTER TABLE job_matches ADD CONSTRAINT job_matches_status_check
     CHECK (status IN ('matched', 'rejected', 'generated', 'applied', 'waiting', 'suspended', 'duplicate'));
+
+-- ── Job Enrichments (LLM-extracted structured data) ────────────────────
+-- Populated by stage 02 batch matcher for every scored job.
+-- Separates scraped data from LLM-extracted enrichment.
+
+CREATE TABLE IF NOT EXISTS job_enrichments (
+    id                SERIAL PRIMARY KEY,
+    job_id            INTEGER NOT NULL REFERENCES scraped_jobs(id) ON DELETE CASCADE,
+    technical_skills  TEXT[],              -- ["python", "sap", "autocad", ...]
+    soft_skills       TEXT[],              -- ["communication", "problem-solving", ...]
+    required_qualifications TEXT[],        -- ["degree in computer science", "cima", ...]
+    required_experience VARCHAR(100),      -- free-text: "3+ years", "entry-level", null
+    min_salary        NUMERIC(10,2),
+    max_salary        NUMERIC(10,2),
+    currency          VARCHAR(5),
+    normalized_category VARCHAR(50),
+    job_type          VARCHAR(30),
+    remote_eligible   BOOLEAN,
+    enriched_at       TIMESTAMP WITH TIME ZONE DEFAULT timezone('Africa/Harare', CURRENT_TIMESTAMP),
+    enrichment_model  VARCHAR(100),
+    UNIQUE(job_id)
+);
 
 -- ── RAG View: Consolidated Resume Snapshots ──────────────────────────
 

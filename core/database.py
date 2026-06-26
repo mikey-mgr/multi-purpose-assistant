@@ -212,6 +212,33 @@ class ScrapedJob(Base):
     scraped_at         = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
     apply_instructions = Column(Text)
 
+    enrichment = relationship("JobEnrichment", back_populates="job", uselist=False)
+
+
+# ── Job Enrichments (LLM-extracted structured data) ──────────────────
+
+class JobEnrichment(Base):
+    __tablename__ = 'job_enrichments'
+
+    id                 = Column(Integer, primary_key=True, autoincrement=True)
+    job_id             = Column(Integer, ForeignKey('scraped_jobs.id', ondelete='CASCADE'), nullable=False)
+    technical_skills   = Column(ARRAY(Text))
+    soft_skills        = Column(ARRAY(Text))
+    required_qualifications = Column(ARRAY(Text))
+    required_experience = Column(String(100))
+    min_salary         = Column(Numeric(10, 2))
+    max_salary         = Column(Numeric(10, 2))
+    currency           = Column(String(5))
+    normalized_category = Column(String(50))
+    job_type           = Column(String(30))
+    remote_eligible    = Column(Boolean)
+    enriched_at        = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+    enrichment_model   = Column(String(100))
+
+    job = relationship("ScrapedJob", back_populates="enrichment")
+
+    __table_args__ = (UniqueConstraint('job_id'),)
+
 
 # ── Job Matches ────────────────────────────────────────────────────────
 
@@ -224,7 +251,7 @@ class JobMatch(Base):
     status     = Column(String(20), nullable=False)   # 'matched' | 'rejected' | 'generated' | 'applied'
     score      = Column(Integer)                       # 0–100
     reason     = Column(Text)                          # comprehensive analysis of gaps (overwritten by 03)
-    matched_by = Column(String(20), default='llm')    # 'llm' | 'keyword_fallback'
+    matched_by = Column(String(20), default='llm')    # 'llm' | 'keyword_fallback' | 'llm_dedup'
     llm_raw    = Column(Text)
 
     # Apply details — populated by 03 (ats_and_cover_v1)
@@ -547,6 +574,44 @@ def bulk_insert_job_matches(matches: list[dict]):
     try:
         for m in matches:
             session.add(JobMatch(**m))
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def save_job_enrichments(enrichments: list[dict]):
+    """
+    Upsert job enrichment data.
+
+    Each dict should have:
+      - job_id (int)
+      - technical_skills (list[str] | None)
+      - soft_skills (list[str] | None)
+      - required_qualifications (list[str] | None)
+      - required_experience (str | None)
+      - min_salary (float | None)
+      - max_salary (float | None)
+      - currency (str | None)
+      - normalized_category (str | None)
+      - job_type (str | None)
+      - remote_eligible (bool | None)
+      - enrichment_model (str | None)
+    """
+    session = get_session()
+    try:
+        for e in enrichments:
+            existing = session.query(JobEnrichment).filter(
+                JobEnrichment.job_id == e["job_id"]
+            ).first()
+            if existing:
+                for key, val in e.items():
+                    if val is not None and key != "job_id":
+                        setattr(existing, key, val)
+            else:
+                session.add(JobEnrichment(**e))
         session.commit()
     except Exception:
         session.rollback()

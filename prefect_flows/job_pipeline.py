@@ -72,7 +72,7 @@ def store_jobs_task(jobs_df: "pd.DataFrame") -> int:
 def match_pending_jobs(
     user_id: str,
     limit: int = 50,
-    match_model: str = "openai/gpt-4o-mini",
+    match_model: str = "openai/gpt-oss-120b:free",
     match_provider: str | None = None,
 ) -> int:
     """Batch-classify unscored jobs and persist decisions."""
@@ -248,7 +248,7 @@ def scrape_and_store(
 def match_jobs_flow(
     user_id: str,
     limit: int = 50,
-    match_model: str = "openai/gpt-4o-mini",
+    match_model: str = "openai/gpt-oss-120b:free",
     match_provider: str | None = None,
 ):
     """Match unscored jobs for a user."""
