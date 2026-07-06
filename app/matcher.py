@@ -25,7 +25,7 @@ from core.database import (
     save_job_enrichments,
     get_deduped_unscored_jobs,
 )
-from app.llm import generate_text
+from app.llm import generate_text_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -207,13 +207,15 @@ def batch_match_jobs(
     limit: int = 50,
     model: str = "openai/gpt-oss-120b:free",
     provider: str | None = None,
+    fallback_model: str | None = None,
+    fallback_provider: str | None = None,
 ) -> list[dict]:
     """
     Main entry point.
 
     1. Build user profile summary
     2. Fetch unscored jobs
-    3. Call LLM in batch mode
+    3. Call LLM in batch mode (with optional fallback)
     4. Persist decisions to job_matches
 
     Returns the list of match decisions that were inserted.
@@ -243,10 +245,12 @@ def batch_match_jobs(
     prompt_text = _build_prompt(profile, jobs)
     logger.info("Sending %d jobs to LLM for batch classification ...", len(jobs))
 
-    result = generate_text(
+    result = generate_text_with_fallback(
         "job_matcher_v1",
         model=model,
         provider=provider,
+        fallback_model=fallback_model,
+        fallback_provider=fallback_provider,
         batch_input=prompt_text,
     )
     raw = result.get("content", "")

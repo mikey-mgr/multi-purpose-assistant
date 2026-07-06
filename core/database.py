@@ -2,7 +2,7 @@ import json
 import logging
 import math
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text, Date, DateTime, Boolean,
@@ -289,6 +289,82 @@ class GeneratedDocument(Base):
     model         = Column(String(100))
     tokens_used   = Column(Integer, default=0)
     created_at    = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+
+
+# ── Email Cooldown Tracking ─────────────────────────────────────────────
+
+_EMAIL_COOLDOWN_DAYS = 7
+
+
+class EmailCooldown(Base):
+    __tablename__ = 'email_cooldowns'
+
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    recipient         = Column(String(255), nullable=False)
+    user_id           = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    last_job_id       = Column(Integer, ForeignKey('scraped_jobs.id', ondelete='SET NULL'))
+    first_attempted_at = Column(DateTime(timezone=True), nullable=False)
+    last_attempted_at = Column(DateTime(timezone=True), nullable=False)
+    cooldown_until    = Column(DateTime(timezone=True), nullable=False)
+    sent_count        = Column(Integer, default=0)
+
+    __table_args__ = (UniqueConstraint('recipient', 'user_id'),)
+
+
+def check_email_cooldown(recipient: str, user_id: str) -> EmailCooldown | None:
+    """Return active cooldown record if recipient is within cooldown, else None."""
+    if not recipient:
+        return None
+    session = get_session()
+    try:
+        uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+        record = session.query(EmailCooldown).filter(
+            EmailCooldown.recipient == recipient,
+            EmailCooldown.user_id == uid,
+        ).first()
+        if record and record.cooldown_until > datetime.now(timezone.utc):
+            return record
+        return None
+    finally:
+        session.close()
+
+
+def record_email_sent(recipient: str, user_id: str, job_id: int) -> EmailCooldown:
+    """Record a successful email send and update cooldown window."""
+    session = get_session()
+    try:
+        uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+        now = datetime.now(timezone.utc)
+        record = session.query(EmailCooldown).filter(
+            EmailCooldown.recipient == recipient,
+            EmailCooldown.user_id == uid,
+        ).first()
+
+        if record:
+            record.last_attempted_at = now
+            record.last_job_id = job_id
+            record.first_attempted_at = now
+            record.cooldown_until = now + timedelta(days=_EMAIL_COOLDOWN_DAYS)
+            record.sent_count = (record.sent_count or 0) + 1
+        else:
+            record = EmailCooldown(
+                recipient=recipient,
+                user_id=uid,
+                last_job_id=job_id,
+                first_attempted_at=now,
+                last_attempted_at=now,
+                cooldown_until=now + timedelta(days=_EMAIL_COOLDOWN_DAYS),
+                sent_count=1,
+            )
+            session.add(record)
+
+        session.commit()
+        return record
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def save_generated_document(session, **kwargs) -> GeneratedDocument:

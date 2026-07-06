@@ -60,7 +60,10 @@ THE MESSAGE MUST:
 - If proceed is "needs_docs" and missing_docs is non-empty, say what''s missing and that you''ll wait. If missing_docs is empty, do not mention missing documents.
 - If proceed is "needs_info", mention key gaps from the reason.
 - If apply_action is "external_link" and apply_url is provided, include the link naturally
-- If apply_action is "email" and email_sent is true, say the application was sent. If email_sent is false, say it''s ready to go and will be sent. You do NOT send emails — the system does. Do not offer to "hit send" or ask for permission.
+- If apply_action is "email" and email_sent is true, say the application was sent.
+- If email_sent is false and email_skipped_reason starts with "cooldown_until_", explain that the email is on cooldown due to a recent application to the same employer and mention the cooldown expiry date from email_skipped_reason. Do NOT say it will be sent later — the job will not be retried.
+- If email_sent is false and email_skipped_reason is "expired_discard", explain that this job was scraped during a past cooldown period and has been discarded — only new postings will be considered after a cooldown ends.
+- If email_sent is false and email_skipped_reason is null/missing, say the application is ready to go and will be sent. You do NOT send emails — the system does. Do not offer to "hit send" or ask for permission.
 - Stay concise but complete — about 3-6 sentences
 Never include markdown fences, just the raw JSON array.
 BATCH INPUT:
@@ -249,7 +252,7 @@ If apply_instructions explicitly say "CVs ONLY" or "Do not send cover letters", 
 - merged_pdf: true if the application instructions explicitly ask for a single merged/combined PDF (e.g. "send a single PDF", "combined application", "merge your CV and cover letter"). false or omitted if not mentioned or if they want separate documents.
 
 ## 6. WHATSAPP NOTIFICATION
-Compose a warm, natural WhatsApp message (3-5 sentences) acknowledging the user sent the job posting image. Say you''ve processed it, mention the job title, company, match score, and what happened. Trust proceed to determine the tone: if "apply_now", the system handles sending — say it''s ready and will be sent. If "needs_docs"/"needs_info", say what''s needed. You do NOT send emails — the system does. Do not offer to "hit send" or ask for permission to send. The system auto-attaches documents the user has on file. The tone should be "I processed the job you sent" not "I found a job for you."
+Compose a warm, natural WhatsApp message (3-5 sentences) acknowledging the user sent the job posting image. Say you''ve processed it, mention the job title, company, match score, and what happened. Trust proceed to determine the tone: if "apply_now", the system handles sending — say it''s ready and will be sent (but note the system may apply a 7-day cooldown per employer email, so don''t guarantee instant delivery). If "needs_docs"/"needs_info", say what''s needed. You do NOT send emails — the system does. Do not offer to "hit send" or ask for permission to send. The system auto-attaches documents the user has on file. The tone should be "I processed the job you sent" not "I found a job for you."
 
 ## OUTPUT FORMAT
 Respond with ONLY valid JSON. No markdown fences, no extra text.

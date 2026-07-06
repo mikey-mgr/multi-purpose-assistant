@@ -32,6 +32,7 @@ def _build_whatsapp_entry(
     email_sent: bool,
     missing_docs: list[str],
     available_docs: dict[str, str] | None = None,
+    cooldown_until: str | None = None,
 ) -> dict:
     """Build a single notification entry from stored DB data."""
     return {
@@ -43,6 +44,7 @@ def _build_whatsapp_entry(
         "proceed": match.proceed or "apply_now",
         "apply_url": match.apply_url or "",
         "email_sent": email_sent,
+        "email_skipped_reason": f"cooldown_until_{cooldown_until}" if cooldown_until else None,
         "missing_docs": missing_docs,
         "available_docs": available_docs or {},
     }
@@ -82,8 +84,10 @@ def batch_compose_whatsapp(
         job = item["job"]
         match = item["match"]
         email_sent = email_sent_map.get(job.id, False)
-        missing_docs = results_map.get(job.id, {}).get("missing_docs", [])
-        entries.append(_build_whatsapp_entry(job, match, email_sent, missing_docs, available_docs))
+        r = results_map.get(job.id, {})
+        missing_docs = r.get("missing_docs", [])
+        cooldown_until = r.get("cooldown_until")
+        entries.append(_build_whatsapp_entry(job, match, email_sent, missing_docs, available_docs, cooldown_until))
 
     batch_input_json = json.dumps(entries, indent=2)
     logger.info("Composing WhatsApp batch notification for %d jobs.", len(entries))

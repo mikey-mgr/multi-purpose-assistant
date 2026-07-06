@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 
 from core.database import (
     get_session,
@@ -27,6 +28,8 @@ from core.database import (
     normalize_job_title,
     Resume,
     User,
+    check_email_cooldown,
+    record_email_sent,
 )
 from app.schemas import GeneratedDocument as GDocSchema
 from app.llm import generate_text
@@ -427,6 +430,33 @@ def batch_process_applications(
             update_job_match_status(job.id, user_id, "duplicate")
             continue
 
+        # ── Cooldown check: never email same recipient within 7 days ──
+        cooldown_until = None
+        if recip:
+            cooldown_record = check_email_cooldown(recip, user_id)
+            if cooldown_record:
+                now = datetime.now(timezone.utc)
+                if cooldown_record.cooldown_until > now:
+                    logger.info(
+                        "Cooldown active for %s — skipping email for job #%d '%s' (cooldown until %s)",
+                        recip, job.id, job.title, cooldown_record.cooldown_until,
+                    )
+                    cooldown_until = cooldown_record.cooldown_until.isoformat()
+                else:
+                    cooldown_expired = cooldown_record.cooldown_until
+                    job_scraped = job.scraped_at
+                    if job_scraped and job_scraped <= cooldown_expired:
+                        logger.info(
+                            "Cooldown expired for %s but job #%d was scraped during cooldown (%s) — discarding",
+                            recip, job.id, job_scraped,
+                        )
+                        cooldown_until = "expired_discard"
+                    else:
+                        logger.info(
+                            "Cooldown expired for %s and job #%d is new enough — will send",
+                            recip, job.id,
+                        )
+
         # Determine missing docs
         docs = get_application_documents(resolve_resume_id, job.id)
         missing_docs = [d for d in required_docs if not _doc_available(d, docs)]
@@ -450,7 +480,7 @@ def batch_process_applications(
 
         email_sent = False
         # Only send email if: action is email, recipient exists, no missing docs, AND proceed says apply_now
-        if action == "email" and recip and not missing_docs and proceed == "apply_now":
+        if not cooldown_until and action == "email" and recip and not missing_docs and proceed == "apply_now":
             attachment_paths = _build_attachment_list(required_docs, docs, merged_pdf_path)
             from app.email_sender import send_email
             ok = send_email(
@@ -464,8 +494,15 @@ def batch_process_applications(
                 job.id, recip, len(attachment_paths or []),
             )
             email_sent = ok
-            if not ok:
+            if ok:
+                record_email_sent(recip, user_id, job.id)
+            else:
                 logger.warning("Email FAILED for job %s — check email_sender logs above.", job.id)
+        elif cooldown_until:
+            logger.info(
+                "Email skipped for job #%d '%s' due to cooldown on %s",
+                job.id, job.title, recip,
+            )
 
         # Send document via WhatsApp when action is external_url and docs are available
         whatsapp_doc_sent = False
@@ -486,6 +523,7 @@ def batch_process_applications(
         results_map[job.id] = {
             "action": action,
             "missing_docs": missing_docs,
+            "cooldown_until": cooldown_until,
         }
         seen_recipient_titles.add(dup_key)
 

@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 
 from prefect import flow, get_run_logger
 
@@ -34,6 +35,8 @@ from core.database import (
     find_similar_job,
     find_existing_application,
     normalize_job_title,
+    check_email_cooldown,
+    record_email_sent,
 )
 
 logger = logging.getLogger(__name__)
@@ -274,7 +277,29 @@ def process_whatsapp_job(
     docs = get_application_documents(str(resume_id), db_job.id) if resume_id else {}
     req_docs = apply_details.get("required_docs", ["resume"])
 
+    # ── Cooldown check: never email same recipient within 7 days ──
+    _cooldown_until = None
     if action == "email" and recip and not existing_app:
+        cooldown_record = check_email_cooldown(recip, uid)
+        if cooldown_record:
+            now = datetime.now(timezone.utc)
+            if cooldown_record.cooldown_until > now:
+                run_logger.info(
+                    "Cooldown active for %s — skipping email for WhatsApp job #%d (cooldown until %s)",
+                    recip, db_job.id, cooldown_record.cooldown_until,
+                )
+                _cooldown_until = cooldown_record.cooldown_until.isoformat()
+            else:
+                cooldown_expired = cooldown_record.cooldown_until
+                job_scraped = db_job.scraped_at
+                if job_scraped and job_scraped <= cooldown_expired:
+                    run_logger.info(
+                        "Cooldown expired for %s but WhatsApp job #%d was scraped during cooldown (%s) — discarding",
+                        recip, db_job.id, job_scraped,
+                    )
+                    _cooldown_until = "expired_discard"
+
+    if action == "email" and recip and not existing_app and not _cooldown_until:
         subject = apply_details.get("subject") or f"Application: {job_data.get('title')}"
         body = apply_details.get("body") or ""
 
@@ -299,6 +324,10 @@ def process_whatsapp_job(
             attachments=attachment_paths or None,
         )
         run_logger.info("Email %s to %s", "sent" if email_sent else "FAILED", recip)
+        if email_sent:
+            record_email_sent(recip, uid, db_job.id)
+    elif _cooldown_until:
+        run_logger.info("Email skipped for WhatsApp job #%d due to cooldown on %s", db_job.id, recip)
 
     # Send document via WhatsApp when action is external_url
     if action == "external_url":
@@ -324,6 +353,19 @@ def process_whatsapp_job(
 
     # 9. Send WhatsApp notification (text is pre-composed by LLM)
     if whatsapp_text:
+        if _cooldown_until and _cooldown_until != "expired_discard":
+            cooldown_date = _cooldown_until[:10]
+            whatsapp_text += (
+                f"\n\nNote: Email to {recip} was not sent — "
+                f"a recent application was already made to this employer "
+                f"(cooldown until {cooldown_date})."
+            )
+        elif _cooldown_until == "expired_discard":
+            whatsapp_text += (
+                f"\n\nNote: Email to {recip} was not sent — "
+                f"this job posting was scraped during a past cooldown period "
+                f"for this employer and has been discarded."
+            )
         send_whatsapp(
             text=whatsapp_text,
             score=match_data.get("score"),

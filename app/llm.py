@@ -126,6 +126,44 @@ def generate_text(
     }
 
 
+def generate_text_with_fallback(
+    prompt_name: str,
+    model: str | None = None,
+    provider: str | None = None,
+    fallback_model: str | None = None,
+    fallback_provider: str | None = None,
+    max_attempts: int = 3,
+    **variables: Any,
+) -> dict[str, Any]:
+    last_error = None
+    for attempt in range(max_attempts):
+        try:
+            if attempt % 2 == 0:
+                m, p = model, provider
+                tag = "primary"
+            else:
+                m, p = fallback_model, fallback_provider
+                tag = f"fallback (attempt {attempt + 1})"
+
+            logger.info(
+                "generate_text attempt %d/%d [%s]: model=%s provider=%s",
+                attempt + 1, max_attempts, tag, m, p,
+            )
+
+            result = generate_text(prompt_name, model=m, provider=p, **variables)
+            if result.get("content"):
+                return result
+
+            last_error = Exception(f"Empty content on attempt {attempt + 1}")
+
+        except Exception as e:
+            last_error = e
+            logger.warning("Attempt %d/%d failed: %s", attempt + 1, max_attempts, e)
+
+    logger.error("All %d attempts failed: %s", max_attempts, last_error)
+    return {"content": "", "model": "all_attempts_failed", "tokens_used": 0}
+
+
 def generate_text_direct(
     system_prompt: str,
     user_prompt: str,
@@ -184,6 +222,44 @@ def generate_text_direct(
         "model": response.model,
         "tokens_used": response.usage.total_tokens if response.usage else 0,
     }
+
+
+def generate_text_direct_with_fallback(
+    system_prompt: str,
+    user_prompt: str,
+    model: str | None = None,
+    provider: str | None = None,
+    fallback_model: str | None = None,
+    fallback_provider: str | None = None,
+    max_attempts: int = 3,
+) -> dict[str, Any]:
+    last_error = None
+    for attempt in range(max_attempts):
+        try:
+            if attempt % 2 == 0:
+                m, p = model, provider
+                tag = "primary"
+            else:
+                m, p = fallback_model, fallback_provider
+                tag = f"fallback (attempt {attempt + 1})"
+
+            logger.info(
+                "generate_text_direct attempt %d/%d [%s]: model=%s provider=%s",
+                attempt + 1, max_attempts, tag, m, p,
+            )
+
+            result = generate_text_direct(system_prompt, user_prompt, model=m, provider=p)
+            if result.get("content"):
+                return result
+
+            last_error = Exception(f"Empty content on attempt {attempt + 1}")
+
+        except Exception as e:
+            last_error = e
+            logger.warning("Attempt %d/%d failed: %s", attempt + 1, max_attempts, e)
+
+    logger.error("All %d attempts failed: %s", max_attempts, last_error)
+    return {"content": "", "model": "all_attempts_failed", "tokens_used": 0}
 
 
 def generate_embedding(text: str, provider: str | None = None) -> list[float]:

@@ -74,10 +74,13 @@ def match_pending_jobs(
     limit: int = 50,
     match_model: str = "openai/gpt-oss-120b:free",
     match_provider: str | None = None,
+    match_fallback_model: str | None = None,
+    match_fallback_provider: str | None = None,
 ) -> int:
     """Batch-classify unscored jobs and persist decisions."""
     decisions = batch_match_jobs(
-        user_id, limit=limit, model=match_model, provider=match_provider
+        user_id, limit=limit, model=match_model, provider=match_provider,
+        fallback_model=match_fallback_model, fallback_provider=match_fallback_provider,
     )
     return len(decisions)
 
@@ -182,6 +185,8 @@ def scrape_and_store(
     user_id: str | None = None,
     match_model: str | None = None,
     match_provider: str | None = None,
+    match_fallback_model: str | None = None,
+    match_fallback_provider: str | None = None,
     generate_model: str | None = None,
     generate_provider: str | None = None,
     generate_fallback_model: str | None = None,
@@ -213,6 +218,8 @@ def scrape_and_store(
             limit=match_limit,
             match_model=match_model,
             match_provider=match_provider,
+            match_fallback_model=match_fallback_model,
+            match_fallback_provider=match_fallback_provider,
         )
 
         # Step 3 — generate docs for matched jobs
@@ -250,11 +257,14 @@ def match_jobs_flow(
     limit: int = 50,
     match_model: str = "openai/gpt-oss-120b:free",
     match_provider: str | None = None,
+    match_fallback_model: str | None = None,
+    match_fallback_provider: str | None = None,
 ):
     """Match unscored jobs for a user."""
     run_logger = get_run_logger()
     matched = match_pending_jobs(
-        user_id, limit=limit, match_model=match_model, match_provider=match_provider
+        user_id, limit=limit, match_model=match_model, match_provider=match_provider,
+        match_fallback_model=match_fallback_model, match_fallback_provider=match_fallback_provider,
     )
     run_logger.info("Match complete — %d decisions saved.", matched)
 

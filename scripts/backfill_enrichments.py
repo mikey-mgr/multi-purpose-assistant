@@ -18,7 +18,7 @@ from core.database import (
     JobEnrichment,
     save_job_enrichments,
 )
-from app.llm import generate_text_direct
+from app.llm import generate_text_direct_with_fallback
 
 logging.basicConfig(
     level=logging.INFO,
@@ -115,6 +115,8 @@ def _to_float(v):
 def backfill_enrichments(
     batch_size: int = 20,
     model: str = "openai/gpt-oss-120b:free",
+    fallback_model: str | None = None,
+    fallback_provider: str | None = None,
     delay: float = 1.0,
 ):
     """Backfill enrichment data for all jobs missing it."""
@@ -133,10 +135,12 @@ def backfill_enrichments(
         logger.info("Batch %d/%d: %d jobs ...", batch_start // batch_size + 1, (len(jobs) + batch_size - 1) // batch_size, len(batch))
 
         try:
-            result = generate_text_direct(
+            result = generate_text_direct_with_fallback(
                 system_prompt=ENRICHMENT_PROMPT,
                 user_prompt=prompt_chunk,
                 model=model,
+                fallback_model=fallback_model,
+                fallback_provider=fallback_provider,
             )
         except Exception as e:
             logger.error("LLM call failed for batch: %s — skipping batch", e)
@@ -186,6 +190,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Backfill job enrichment data")
     parser.add_argument("--batch-size", type=int, default=20, help="Jobs per LLM batch")
     parser.add_argument("--model", type=str, default="openai/gpt-oss-120b:free", help="LLM model for extraction")
+    parser.add_argument("--fallback-model", type=str, default=None, help="Fallback LLM model if primary fails")
+    parser.add_argument("--fallback-provider", type=str, default=None, help="Provider for fallback model")
     parser.add_argument("--delay", type=float, default=1.0, help="Delay between batches (seconds)")
     args = parser.parse_args()
-    backfill_enrichments(batch_size=args.batch_size, model=args.model, delay=args.delay)
+    backfill_enrichments(
+        batch_size=args.batch_size, model=args.model,
+        fallback_model=args.fallback_model, fallback_provider=args.fallback_provider,
+        delay=args.delay,
+    )
