@@ -311,6 +311,169 @@ class EmailCooldown(Base):
     __table_args__ = (UniqueConstraint('recipient', 'user_id'),)
 
 
+# ── Relationship Nurturing: Contacts ────────────────────────────────
+
+class Contact(Base):
+    __tablename__ = 'contacts'
+
+    id               = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
+    first_name       = Column(String(100), nullable=False)
+    last_name        = Column(String(100), nullable=False)
+    email            = Column(String(255))
+    phone            = Column(String(20))
+    current_company  = Column(String(150))
+    job_title        = Column(String(150))
+    linkedin_url     = Column(String(255))
+    location_city    = Column(String(100))
+    location_country = Column(String(100))
+    source           = Column(String(50), default='manual')
+    source_id        = Column(String(255))
+    notes            = Column(Text)
+    last_imported_at = Column(DateTime(timezone=True))
+    created_at       = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+    updated_at       = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+
+    profile    = relationship('ContactProfile', uselist=False, back_populates='contact', cascade='all, delete-orphan')
+    family     = relationship('ContactFamily', back_populates='contact', cascade='all, delete-orphan')
+    education  = relationship('ContactEducation', back_populates='contact', cascade='all, delete-orphan')
+    groups     = relationship('ContactGroupMembership', back_populates='contact', cascade='all, delete-orphan')
+    interactions = relationship('ContactInteraction', back_populates='contact', cascade='all, delete-orphan')
+    milestones = relationship('ContactMilestone', back_populates='contact', cascade='all, delete-orphan')
+    outreach_suggestions = relationship('ContactOutreachSuggestion', back_populates='contact', cascade='all, delete-orphan')
+    referral_opportunities = relationship('JobReferralOpportunity', back_populates='contact', cascade='all, delete-orphan')
+
+
+class ContactProfile(Base):
+    __tablename__ = 'contact_profiles'
+
+    id                    = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
+    contact_id            = Column(UUID(as_uuid=True), ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    professional_summary  = Column(Text)
+    business_interests    = Column(ARRAY(Text))
+    hobbies               = Column(ARRAY(Text))
+    birthday              = Column(Date)
+    anniversary           = Column(Date)
+    relationship_strength = Column(Integer, default=50)
+    created_at            = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+    updated_at            = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+
+    contact = relationship('Contact', back_populates='profile')
+
+
+class ContactFamily(Base):
+    __tablename__ = 'contact_family'
+
+    id                 = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
+    contact_id         = Column(UUID(as_uuid=True), ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    family_member_name = Column(String(100), nullable=False)
+    relation_type      = Column(String(50), nullable=False)  # 'spouse', 'child', 'parent', 'sibling'
+    birthday           = Column(Date)
+    notes              = Column(Text)
+
+    contact = relationship('Contact', back_populates='family')
+
+
+class ContactEducation(Base):
+    __tablename__ = 'contact_education'
+
+    id              = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
+    contact_id      = Column(UUID(as_uuid=True), ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    institution     = Column(String(150), nullable=False)
+    degree_type     = Column(String(50))
+    field_of_study  = Column(String(100))
+    graduation_year = Column(Integer)
+
+    contact = relationship('Contact', back_populates='education')
+
+
+class ContactGroup(Base):
+    __tablename__ = 'contact_groups'
+
+    id          = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
+    group_name  = Column(String(100), unique=True, nullable=False)
+    description = Column(Text)
+    created_at  = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+
+    members = relationship('ContactGroupMembership', back_populates='group', cascade='all, delete-orphan')
+
+
+class ContactGroupMembership(Base):
+    __tablename__ = 'contact_group_memberships'
+
+    id         = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
+    contact_id = Column(UUID(as_uuid=True), ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    group_id   = Column(UUID(as_uuid=True), ForeignKey('contact_groups.id', ondelete='CASCADE'), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+
+    contact = relationship('Contact', back_populates='groups')
+    group   = relationship('ContactGroup', back_populates='members')
+
+    __table_args__ = (UniqueConstraint('contact_id', 'group_id'),)
+
+
+class ContactInteraction(Base):
+    __tablename__ = 'contact_interactions'
+
+    id               = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
+    contact_id       = Column(UUID(as_uuid=True), ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    interaction_type = Column(String(50), nullable=False)
+    direction        = Column(String(10), nullable=False)
+    notes            = Column(Text)
+    context          = Column(Text)
+    value_provided   = Column(Text)
+    follow_up_date   = Column(Date)
+    followed_up_at   = Column(DateTime(timezone=True))
+    created_at       = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+
+    contact = relationship('Contact', back_populates='interactions')
+
+
+class ContactOutreachSuggestion(Base):
+    __tablename__ = 'contact_outreach_suggestions'
+
+    id               = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
+    contact_id       = Column(UUID(as_uuid=True), ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    suggestion_type  = Column(String(50), nullable=False)
+    content          = Column(Text, nullable=False)
+    generated_at     = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+    used_at          = Column(DateTime(timezone=True))
+    rating           = Column(Integer)
+
+    contact = relationship('Contact', back_populates='outreach_suggestions')
+
+
+class ContactMilestone(Base):
+    __tablename__ = 'contact_milestones'
+
+    id              = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
+    contact_id      = Column(UUID(as_uuid=True), ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    milestone_type  = Column(String(50), nullable=False)
+    milestone_date  = Column(Date, nullable=False)
+    description     = Column(Text)
+    acknowledged_at = Column(DateTime(timezone=True))
+    message_sent_at = Column(DateTime(timezone=True))
+    created_at      = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+
+    contact = relationship('Contact', back_populates='milestones')
+
+
+class JobReferralOpportunity(Base):
+    __tablename__ = 'job_referral_opportunities'
+
+    id             = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
+    job_match_id   = Column(UUID(as_uuid=True), ForeignKey('job_matches.id', ondelete='CASCADE'), nullable=False)
+    contact_id     = Column(UUID(as_uuid=True), ForeignKey('contacts.id', ondelete='CASCADE'), nullable=False)
+    status         = Column(String(20), default='pending')
+    reached_out_at = Column(DateTime(timezone=True))
+    response       = Column(Text)
+    notes          = Column(Text)
+    created_at     = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))
+
+    contact = relationship('Contact', back_populates='referral_opportunities')
+
+    __table_args__ = (UniqueConstraint('job_match_id', 'contact_id'),)
+
+
 def check_email_cooldown(recipient: str, user_id: str) -> EmailCooldown | None:
     """Return active cooldown record if recipient is within cooldown, else None."""
     if not recipient:
@@ -939,8 +1102,12 @@ def find_similar_job(
     company: str,
     location: str | None = None,
     exclude_url: str | None = None,
+    max_age_days: int | None = 7,
 ) -> ScrapedJob | None:
     """Find an existing job with matching (title, company) case-insensitively.
+
+    Only considers jobs scraped within ``max_age_days`` (default 7).
+    Pass ``max_age_days=None`` to disable the time window (match any age).
 
     Location is intentionally NOT used — same job posted on different sites
     often has slightly different location formatting ("Harare" vs "Harare, Zimbabwe").
@@ -955,15 +1122,26 @@ def find_similar_job(
         )
         if exclude_url:
             query = query.filter(ScrapedJob.job_url != exclude_url)
+        if max_age_days is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+            query = query.filter(ScrapedJob.scraped_at >= cutoff)
         return query.first()
     finally:
         session.close()
 
 
-def insert_jobs(jobs_list):
-    """Insert a list of job dicts into scraped_jobs. Skips duplicates by job_url and by (title, company, location)."""
+def insert_jobs(jobs_list, log_fn=None):
+    """Insert a list of job dicts into scraped_jobs. Skips duplicates by job_url and by (title, company, location).
+
+    Args:
+        jobs_list: List of job dicts.
+        log_fn: Optional callable(msg, *args) for logging (e.g. ``get_run_logger().info``).
+                Falls back to ``logger.info``.
+    """
     if not jobs_list:
         return 0
+
+    log = (lambda msg, *a: log_fn(msg, *a)) if log_fn else (lambda msg, *a: logger.info(msg, *a))
 
     session = get_session()
     count = 0
@@ -995,7 +1173,7 @@ def insert_jobs(jobs_list):
                     exclude_url=url,
                 )
                 if similar:
-                    logger.info(
+                    log(
                         "Skipped duplicate job '%s' at '%s' (matches existing #%d from %s)",
                         title, company, similar.id, similar.site,
                     )
@@ -1020,7 +1198,7 @@ def insert_jobs(jobs_list):
             count += 1
 
         session.commit()
-        logger.info("Inserted %d new job(s) into database.", count)
+        log("Inserted %d new job(s) into database.", count)
     except Exception as e:
         session.rollback()
         logger.error("Database insert failed: %s", e)
@@ -1029,3 +1207,180 @@ def insert_jobs(jobs_list):
         session.close()
 
     return count
+
+
+# ── Relationship Nurturing: Referral Helpers ─────────────────────────
+
+def find_referral_opportunities_for_job(job_id: int) -> list[dict]:
+    """Find contacts who work at the same company as a given job posting.
+    
+    Returns list of dicts with contact + job_match info.
+    """
+    session = get_session()
+    try:
+        job = session.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+        if not job or not job.company:
+            return []
+
+        company_clean = job.company.strip().lower()
+        contacts = session.query(Contact).filter(
+            func.lower(func.trim(Contact.current_company)) == company_clean
+        ).all()
+
+        results = []
+        for c in contacts:
+            profile = session.query(ContactProfile).filter(
+                ContactProfile.contact_id == c.id
+            ).first()
+            results.append({
+                "contact": {
+                    "id": str(c.id),
+                    "first_name": c.first_name,
+                    "last_name": c.last_name,
+                    "job_title": c.job_title,
+                    "email": c.email,
+                    "phone": c.phone,
+                    "linkedin_url": c.linkedin_url,
+                },
+                "relationship_strength": profile.relationship_strength if profile else 50,
+                "job": {
+                    "id": job.id,
+                    "title": job.title,
+                    "company": job.company,
+                },
+            })
+        return results
+    finally:
+        session.close()
+
+
+def find_all_referral_opportunities(
+    user_id: str,
+    status_filter: list[str] | None = None,
+) -> list[dict]:
+    """Find all matched jobs where the user knows a contact at the company.
+    
+    Returns list of (job_match, contact) pairs.
+    """
+    session = get_session()
+    try:
+        statuses = status_filter or ['matched', 'generated']
+        uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+
+        rows = session.query(JobMatch, ScrapedJob).join(
+            ScrapedJob, JobMatch.job_id == ScrapedJob.id
+        ).filter(
+            JobMatch.user_id == uid,
+            JobMatch.status.in_(statuses),
+        ).all()
+
+        results = []
+        seen = set()
+        for match, job in rows:
+            if not job or not job.company:
+                continue
+            company_clean = job.company.strip().lower()
+            contacts = session.query(Contact).filter(
+                func.lower(func.trim(Contact.current_company)) == company_clean
+            ).all()
+            for c in contacts:
+                key = (str(match.id), str(c.id))
+                if key in seen:
+                    continue
+                seen.add(key)
+                profile = session.query(ContactProfile).filter(
+                    ContactProfile.contact_id == c.id
+                ).first()
+                results.append({
+                    "job_match_id": str(match.id),
+                    "job_id": job.id,
+                    "job_title": job.title,
+                    "company": job.company,
+                    "score": match.score,
+                    "contact": {
+                        "id": str(c.id),
+                        "first_name": c.first_name,
+                        "last_name": c.last_name,
+                        "job_title": c.job_title,
+                        "email": c.email,
+                    },
+                    "relationship_strength": profile.relationship_strength if profile else 50,
+                })
+        return results
+    finally:
+        session.close()
+
+
+def save_referral_opportunity(
+    job_match_id: str,
+    contact_id: str,
+) -> JobReferralOpportunity:
+    """Record a referral opportunity in the database."""
+    session = get_session()
+    try:
+        existing = session.query(JobReferralOpportunity).filter(
+            JobReferralOpportunity.job_match_id == job_match_id,
+            JobReferralOpportunity.contact_id == contact_id,
+        ).first()
+        if existing:
+            return existing
+
+        opp = JobReferralOpportunity(
+            job_match_id=uuid.UUID(job_match_id) if isinstance(job_match_id, str) else job_match_id,
+            contact_id=uuid.UUID(contact_id) if isinstance(contact_id, str) else contact_id,
+        )
+        session.add(opp)
+        session.commit()
+        return opp
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def get_contacts_by_group(group_name: str) -> list[Contact]:
+    """Fetch all contacts in a given group."""
+    session = get_session()
+    try:
+        return session.query(Contact).join(
+            ContactGroupMembership, ContactGroupMembership.contact_id == Contact.id
+        ).join(
+            ContactGroup, ContactGroup.id == ContactGroupMembership.group_id
+        ).filter(
+            ContactGroup.group_name == group_name
+        ).all()
+    finally:
+        session.close()
+
+
+def get_upcoming_milestone_contacts(days: int = 14) -> list[dict]:
+    """Fetch contacts with unacknowledged milestones in the next N days."""
+    session = get_session()
+    try:
+        from datetime import date, timedelta
+        today = date.today()
+        deadline = today + timedelta(days=days)
+        rows = session.query(
+            ContactMilestone, Contact
+        ).join(
+            Contact, ContactMilestone.contact_id == Contact.id
+        ).filter(
+            ContactMilestone.milestone_date.between(today, deadline),
+            ContactMilestone.acknowledged_at.is_(None),
+        ).order_by(ContactMilestone.milestone_date).all()
+
+        return [
+            {
+                "milestone_id": str(m.id),
+                "contact_id": str(c.id),
+                "first_name": c.first_name,
+                "last_name": c.last_name,
+                "milestone_type": m.milestone_type,
+                "milestone_date": m.milestone_date.isoformat(),
+                "days_until": (m.milestone_date - today).days,
+            }
+            for m, c in rows
+        ]
+    finally:
+        session.close()

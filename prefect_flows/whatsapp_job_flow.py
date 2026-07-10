@@ -341,7 +341,7 @@ def process_whatsapp_job(
             if merged_pdf_path:
                 from app.whatsapp_notifier import send_whatsapp_document
                 url = apply_details.get("url", "external link")
-                caption = f"Your application documents for {job_data.get('title')} at {job_data.get('company')} — apply at: {url}"
+                caption = f"Your application documents for {job_data.get('title')} at {job_data.get('company')} — apply at: {url}  🆔 Job #{db_job.id}"
                 doc_sent = send_whatsapp_document(
                     file_path=merged_pdf_path,
                     caption=caption,
@@ -367,7 +367,7 @@ def process_whatsapp_job(
                 f"for this employer and has been discarded."
             )
         send_whatsapp(
-            text=whatsapp_text,
+            text=f"{whatsapp_text}\n\n🆔 Job #{db_job.id}",
             score=match_data.get("score"),
         )
 

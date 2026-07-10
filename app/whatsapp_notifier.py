@@ -20,6 +20,18 @@ _PRESENCE_URL = "http://localhost:8080/chat/sendPresence/Apex_Web_Services"
 _WHATSAPP_API_KEY = settings.WHATSAPP_API_KEY
 _WHATSAPP_NUMBER = "263788667111@s.whatsapp.net"
 
+def send_flow_error_notification(flow_name: str, error: str) -> bool:
+    """
+    Send a WhatsApp notification that a Prefect flow failed after all retries.
+    """
+    text = (
+        f"⚠️ Pipeline Alert — {flow_name}\n\n"
+        f"The flow '{flow_name}' failed after all retries.\n"
+        f"Error: {error[:500]}"
+    )
+    return send_whatsapp(text=text)
+
+
 def send_whatsapp(
     text: str,
     fit_assessment: str | None = None,

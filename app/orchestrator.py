@@ -508,7 +508,7 @@ def batch_process_applications(
         whatsapp_doc_sent = False
         if action == "external_url" and not missing_docs and merged_pdf_path:
             from app.whatsapp_notifier import send_whatsapp_document
-            caption = f"Your application documents for {job.title} at {job.company} — apply at: {match.apply_url or 'external link'}"
+            caption = f"Your application documents for {job.title} at {job.company} — apply at: {match.apply_url or 'external link'}  🆔 Job #{job.id}"
             whatsapp_doc_sent = send_whatsapp_document(
                 file_path=merged_pdf_path,
                 caption=caption,
@@ -548,7 +548,7 @@ def batch_process_applications(
         if note:
             from app.whatsapp_notifier import send_whatsapp
             whatsapp_ok = send_whatsapp(
-                text=note,
+                text=f"{note}\n\n🆔 Job #{job.id}",
                 score=match.score,
                 missing_docs=r["missing_docs"],
             )

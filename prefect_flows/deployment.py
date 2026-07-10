@@ -23,7 +23,7 @@ from prefect_flows.whatsapp_job_flow import process_whatsapp_job
 _DEFAULTS = {
     "user_id": "ff0465b9-6512-4f47-8b5e-6f14a343a25d",
     "match_model": "openai/gpt-oss-120b:free",
-    "match_fallback_model": "models/gemma-4-31b-it",
+    "match_fallback_model": "models/gemini-3.1-flash-lite",
     "generate_model": "models/gemini-3.1-flash-lite",
     "generate_fallback_model": "openai/gpt-oss-120b:free",
     "match_provider": "openrouter",
@@ -42,7 +42,7 @@ def build():
         # 1. Standalone scrape — auto-chains 02→03→04 when scheduled
         scrape_and_store.to_deployment(
             name="01-scraper",
-            schedules=[CronSchedule(cron="0 7-21/1 * * *", timezone="Africa/Harare")],
+            schedules=[CronSchedule(cron="0 7-19/3 * * *", timezone="Africa/Harare")],
             tags=["production", "scraping"],
             description="Scrape job boards every hour (7am-10pm). Auto-chains 02→03→04 when scheduled.",
             parameters={

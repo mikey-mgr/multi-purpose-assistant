@@ -11,6 +11,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+_MOCK_PREFIX = "[MOCK]"
+
 _PROVIDER_CONFIG = {
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
@@ -20,6 +22,10 @@ _PROVIDER_CONFIG = {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "key_attr": "GEMINI_API_KEY",
     },
+    "local": {
+        "base_url": "http://127.0.0.1:7080/v1",
+        "api_key": "sk-local",
+    },
 }
 
 
@@ -27,7 +33,7 @@ def _get_client(provider: str | None = None):
     """
     Return an OpenAI-compatible client for the given provider.
 
-    Provider values: ``"openrouter"``, ``"gemini"``.
+    Provider values: ``"openrouter"``, ``"gemini"``, ``"local"``.
     Falls back to ``settings.LLM_PROVIDER`` if not specified.
     Returns ``None`` if the provider's API key is not set.
     """
@@ -39,12 +45,13 @@ def _get_client(provider: str | None = None):
         logger.warning("Unknown provider '%s', defaulting to openrouter", provider)
         cfg = _PROVIDER_CONFIG["openrouter"]
 
-    api_key = getattr(settings, cfg["key_attr"], None)
+    # Some providers (e.g. "local") supply a hardcoded API key in the config
+    api_key = cfg.get("api_key") or getattr(settings, cfg.get("key_attr", ""), None)
     if not api_key:
         logger.warning(
             "Provider '%s' has no API key configured (settings.%s is empty)",
             provider,
-            cfg["key_attr"],
+            cfg.get("key_attr", ""),
         )
         return None
 
@@ -151,17 +158,17 @@ def generate_text_with_fallback(
             )
 
             result = generate_text(prompt_name, model=m, provider=p, **variables)
-            if result.get("content"):
+            content = result.get("content", "")
+            if content and not content.startswith(_MOCK_PREFIX):
                 return result
 
-            last_error = Exception(f"Empty content on attempt {attempt + 1}")
+            last_error = Exception(f"Empty or mock content on attempt {attempt + 1}")
 
         except Exception as e:
             last_error = e
             logger.warning("Attempt %d/%d failed: %s", attempt + 1, max_attempts, e)
 
-    logger.error("All %d attempts failed: %s", max_attempts, last_error)
-    return {"content": "", "model": "all_attempts_failed", "tokens_used": 0}
+    raise last_error or RuntimeError(f"All {max_attempts} attempts failed for prompt '{prompt_name}'")
 
 
 def generate_text_direct(
@@ -249,17 +256,17 @@ def generate_text_direct_with_fallback(
             )
 
             result = generate_text_direct(system_prompt, user_prompt, model=m, provider=p)
-            if result.get("content"):
+            content = result.get("content", "")
+            if content and not content.startswith(_MOCK_PREFIX):
                 return result
 
-            last_error = Exception(f"Empty content on attempt {attempt + 1}")
+            last_error = Exception(f"Empty or mock content on attempt {attempt + 1}")
 
         except Exception as e:
             last_error = e
             logger.warning("Attempt %d/%d failed: %s", attempt + 1, max_attempts, e)
 
-    logger.error("All %d attempts failed: %s", max_attempts, last_error)
-    return {"content": "", "model": "all_attempts_failed", "tokens_used": 0}
+    raise last_error or RuntimeError(f"All {max_attempts} attempts failed for direct prompt")
 
 
 def generate_embedding(text: str, provider: str | None = None) -> list[float]:
