@@ -11,6 +11,17 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+_ARIAL_PATH = r"C:\Windows\Fonts\arial.ttf"
+
+
+def _set_unicode_font(pdf, size: int = 11):
+    """Set a Unicode-capable font on the PDF, falling back to Helvetica."""
+    if os.path.exists(_ARIAL_PATH):
+        pdf.add_font("Unicode", "", _ARIAL_PATH, uni=True)
+        pdf.set_font("Unicode", "", size)
+    else:
+        pdf.set_font("Helvetica", "", size)
+
 
 def ensure_output_dir(subdir: str = "") -> str:
     base = settings.OUTPUT_DIR
@@ -34,13 +45,14 @@ def cover_letter_to_docx(text_content: str, output_path: str) -> str:
 
 
 def cover_letter_to_pdf(text_content: str, output_path: str) -> str:
-    """Render cover letter text as a PDF using fpdf2."""
+    """Render cover letter text as a PDF using fpdf2 with a Unicode font."""
     from fpdf import FPDF
 
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=20)
-    pdf.set_font("Helvetica", "", 11)
+
+    _set_unicode_font(pdf, 11)
 
     for para in text_content.strip().split("\n\n"):
         pdf.multi_cell(0, 6, para.strip())
@@ -153,7 +165,7 @@ def _convert_to_pdf(file_path: str, output_dir: str) -> str | None:
             from docx import Document
             doc = Document(file_path)
             pdf.add_page()
-            pdf.set_font("Helvetica", "", 11)
+            _set_unicode_font(pdf, 11)
             for para in doc.paragraphs:
                 pdf.multi_cell(0, 6, para.text)
                 pdf.ln(1)

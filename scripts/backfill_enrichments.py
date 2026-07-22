@@ -3,7 +3,7 @@ Backfill enrichment data for all scraped jobs missing job_enrichments.
 
 Usage:
     conda run -n prefect_env python scripts/backfill_enrichments.py
-    conda run -n prefect_env python scripts/backfill_enrichments.py --batch-size 20 --model openai/gpt-oss-120b:free
+    conda run -n prefect_env python scripts/backfill_enrichments.py --batch-size 20 --model nvidia/nemotron-3-ultra-550b-a55b:free
 """
 
 import argparse
@@ -114,7 +114,7 @@ def _to_float(v):
 
 def backfill_enrichments(
     batch_size: int = 20,
-    model: str = "openai/gpt-oss-120b:free",
+    model: str = "nvidia/nemotron-3-ultra-550b-a55b:free",
     fallback_model: str | None = None,
     fallback_provider: str | None = None,
     delay: float = 1.0,
@@ -189,7 +189,7 @@ def backfill_enrichments(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Backfill job enrichment data")
     parser.add_argument("--batch-size", type=int, default=20, help="Jobs per LLM batch")
-    parser.add_argument("--model", type=str, default="openai/gpt-oss-120b:free", help="LLM model for extraction")
+    parser.add_argument("--model", type=str, default="nvidia/nemotron-3-ultra-550b-a55b:free", help="LLM model for extraction")
     parser.add_argument("--fallback-model", type=str, default=None, help="Fallback LLM model if primary fails")
     parser.add_argument("--fallback-provider", type=str, default=None, help="Provider for fallback model")
     parser.add_argument("--delay", type=float, default=1.0, help="Delay between batches (seconds)")

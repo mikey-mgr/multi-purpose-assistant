@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,23 @@ from app.config import settings
 from app.utils import unique_path
 
 logger = logging.getLogger(__name__)
+
+_LATEX_UNSAFE_RE = re.compile(r'[\u201c\u201d\u2018\u2019\u2013\u2014\u2022\u2026\u00a0\ufffd\u00a9\u00ae\u2122]')
+
+
+def _sanitize_text(text: str | None) -> str | None:
+    """Replace LaTeX-unsafe Unicode chars with ASCII equivalents before YAML export."""
+    if not text:
+        return text
+    replacements = {
+        '\u201c': '"', '\u201d': '"', '\u2018': "'", '\u2019': "'",
+        '\u2013': '-', '\u2014': '--', '\u2022': '-', '\u2026': '...',
+        '\u00a0': ' ', '\ufffd': '', '\u00a9': '(c)', '\u00ae': '(r)',
+        '\u2122': '(tm)',
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
 
 
 def slugify(name: str) -> str:
@@ -53,7 +71,7 @@ def build_yaml_dict(
 
     `llm_section_overrides` keys (all optional):
       - summary: str — rewritten professional summary
-      - experience_highlights: dict[company_name, list[str]] — rewritten bullets
+      - experience_highlights: dict["Company Name - Job Title", list[str]] — rewritten bullets (composite key)
       - skills: list[{"label": str, "details": str}] — curated skills list
       - project_highlights: dict[project_name, list[str]] — rewritten bullets
     """
@@ -99,10 +117,11 @@ def build_yaml_dict(
     exp_list = []
     for exp in experiences:
         company = exp.get("company_name", "")
-        highlights = exp_overrides.get(company, exp.get("bullet_points", []))
+        position = exp.get("job_title", "")
+        highlights = exp_overrides.get(f"{company} - {position}", exp.get("bullet_points", []))
         exp_list.append({
             "company": company,
-            "position": exp.get("job_title"),
+            "position": position,
             "location": exp.get("location"),
             "start_date": _fmt_date(exp.get("start_date")),
             "end_date": _fmt_date(exp.get("end_date")),
@@ -157,7 +176,6 @@ def build_yaml_dict(
             "location": None,
             "start_date": _fmt_date(proj.get("start_date")),
             "end_date": _fmt_date(proj.get("end_date")),
-            "summary": proj.get("description"),
             "highlights": highlights or None,
         }
         if purl:
@@ -190,8 +208,20 @@ def _group_skills(skills: list[dict]) -> list[dict]:
     ]
 
 
+def _sanitize_dict(obj: Any) -> Any:
+    """Recursively sanitize all string values in a dict/list tree."""
+    if isinstance(obj, str):
+        return _sanitize_text(obj) or ""
+    if isinstance(obj, dict):
+        return {k: _sanitize_dict(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_dict(v) for v in obj]
+    return obj
+
+
 def write_yaml(cv_dict: dict, output_path: str) -> str:
     """Write the RenderCV YAML file."""
+    cv_dict = _sanitize_dict(cv_dict)
     with open(output_path, "w", encoding="utf-8") as f:
         yaml.dump(cv_dict, f, allow_unicode=True, sort_keys=False)
     return output_path
@@ -212,21 +242,20 @@ def render(
         output_dir = os.path.join(settings.OUTPUT_DIR, "rendercv_output")
     os.makedirs(output_dir, exist_ok=True)
 
+    cv_dict = _sanitize_dict(cv_dict)
     name = cv_dict["cv"]["name"]
 
-    # Write YAML to temp location, then copy to output dir
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
-    ) as tmp:
-        yaml_path = tmp.name
-        yaml.dump(cv_dict, tmp, allow_unicode=True, sort_keys=False)
+    # Use a unique temp directory per render call — prevents race when
+    # multiple tasks run concurrently (each gets its own output folder).
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        yaml_path = os.path.join(tmp_dir, "cv.yaml")
+        with open(yaml_path, "w", encoding="utf-8") as f:
+            yaml.dump(cv_dict, f, allow_unicode=True, sort_keys=False)
 
-    try:
-        # rendercv v2.x outputs files to the YAML's parent directory
-        rendercv_out = Path(yaml_path).parent
-
-        result = subprocess.run(
-            ["rendercv", "render", yaml_path, "--output-folder", str(rendercv_out)],
+        cmd = ["rendercv", "render", yaml_path, "--output-folder", tmp_dir]
+        if os.name == "nt":
+            cmd = [sys.executable, "-m", "rendercv", "render", yaml_path, "--output-folder", tmp_dir]
+        result = subprocess.run(cmd,
             capture_output=True,
             encoding="utf-8",
             env={**os.environ, "PYTHONIOENCODING": "utf-8"},
@@ -235,8 +264,7 @@ def render(
         if result.returncode != 0:
             logger.warning("rendercv exited %d (may be a false positive)", result.returncode)
 
-        # v2.x generates NAME_IN_SNAKE_CASE_CV.pdf in the YAML's parent directory
-        pdf_files = list(rendercv_out.glob("*CV*.pdf")) if rendercv_out.is_dir() else []
+        pdf_files = list(Path(tmp_dir).glob("*CV*.pdf"))
         if not pdf_files:
             logger.warning("No PDF found in rendercv output; stderr:\n%s", result.stderr)
             logger.warning("rendercv stdout:\n%s", result.stdout)
@@ -245,18 +273,13 @@ def render(
         src_pdf = str(pdf_files[0])
         logger.info("Found rendercv PDF: %s", src_pdf)
 
-        # Copy to final location with dedup filename
         cv_basename = f"{name} CV - {job_title}" if job_title else f"{name} CV"
         dst_pdf = unique_path(output_dir, cv_basename, ".pdf")
+        dst_yaml = unique_path(output_dir, cv_basename, ".yaml")
         import shutil
         shutil.copy2(src_pdf, dst_pdf)
+        shutil.copy2(yaml_path, dst_yaml)
         logger.info("PDF written to %s", dst_pdf)
-
-        # Also save a copy of the source YAML with the same dedup name
-        yaml_basename = f"{name} CV - {job_title}" if job_title else f"{name} CV"
-        yaml_dst = unique_path(output_dir, yaml_basename, ".yaml")
-        shutil.copy2(yaml_path, yaml_dst)
+        logger.info("YAML written to %s", dst_yaml)
 
         return dst_pdf
-    finally:
-        os.unlink(yaml_path)

@@ -26,8 +26,10 @@ from core.database import (
     get_session,
     ScrapedJob,
     JobMatch,
+    count_unscored_jobs,
+    count_matched_unprocessed_jobs,
+    count_generated_unapplied_jobs,
 )
-from prefect.context import FlowRunContext
 from scrapers.unified_scraper import UnifiedJobScraper
 
 logger = logging.getLogger(__name__)
@@ -73,10 +75,10 @@ def store_jobs_task(jobs_df: "pd.DataFrame") -> int:
 def match_pending_jobs(
     user_id: str,
     limit: int = 50,
-    match_model: str = "openai/gpt-oss-120b:free",
-    match_provider: str | None = None,
-    match_fallback_model: str | None = None,
-    match_fallback_provider: str | None = None,
+    match_model: str = "models/gemini-3.1-flash-lite",
+    match_provider: str = "gemini",
+    match_fallback_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free",
+    match_fallback_provider: str = "openrouter",
 ) -> int:
     """Batch-classify unscored jobs and persist decisions."""
     decisions = batch_match_jobs(
@@ -194,8 +196,10 @@ def scrape_and_store(
     generate_fallback_provider: str | None = None,
     match_limit: int = 50,
     job_limit: int = 10,
+    chain_next: bool = False,
+    max_iterations: int = 3,
 ):
-    """Scrape job boards then auto-chain 02→03→04 if triggered by schedule."""
+    """Scrape job boards. If chain_next=True, triggers 02→03→04 after scraping."""
     run_logger = get_run_logger()
     try:
         jobs_df = scrape_jobs_task(site_names=site_names, max_pages=max_pages)
@@ -205,50 +209,34 @@ def scrape_and_store(
         count = store_jobs_task(jobs_df)
         run_logger.info("Scrape complete — %d new jobs inserted.", count)
 
-        # Auto-chain downstream flows only when triggered by schedule
-        ctx = FlowRunContext.get()
-        if ctx and ctx.flow_run and ctx.flow_run.auto_scheduled:
-            if not user_id:
-                run_logger.warning("No user_id — skipping downstream pipeline.")
-                return
+        if not chain_next:
+            run_logger.info("chain_next=False — stopping after scrape.")
+            return
 
-            run_logger.info("Auto-scheduled — chaining 02→03→04...")
+        if not user_id:
+            run_logger.warning("No user_id — skipping downstream pipeline.")
+            return
 
-            # Step 2 — match unscored jobs
-            matched_count = match_jobs_flow(
-                user_id=user_id,
-                limit=match_limit,
-                match_model=match_model,
-                match_provider=match_provider,
-                match_fallback_model=match_fallback_model,
-                match_fallback_provider=match_fallback_provider,
-            )
+        run_logger.info("chain_next=True — chaining 02→03→04...")
 
-            if matched_count == 0:
-                run_logger.info("No matches found — skipping generate and apply steps.")
-                return
+        # Step 2 — match unscored jobs
+        matched_count = match_jobs_flow(
+            user_id=user_id,
+            limit=match_limit,
+            match_model=match_model,
+            match_provider=match_provider,
+            match_fallback_model=match_fallback_model,
+            match_fallback_provider=match_fallback_provider,
+            chain_next=True,
+            max_iterations=max_iterations,
+        )
 
-            # Step 3 — generate docs for matched jobs
-            generate_matched_flow(
-                user_id=user_id,
-                limit=job_limit,
-                generate_model=generate_model,
-                generate_provider=generate_provider,
-                generate_fallback_model=generate_fallback_model,
-                generate_fallback_provider=generate_fallback_provider,
-            )
+        if matched_count == 0:
+            run_logger.info("No matches found — 03 and 04 skipped.")
+            return
 
-            # Step 4 — apply via email / WhatsApp
-            apply_agent_flow(
-                user_id=user_id,
-                limit=job_limit,
-                generate_model=generate_model,
-                generate_provider=generate_provider,
-            )
-
-            run_logger.info("Downstream pipeline complete.")
-        else:
-            run_logger.info("Manual run — stopping after scrape.")
+        # Steps 3 and 4 are triggered by match_jobs_flow when chain_next=True
+        run_logger.info("Downstream pipeline complete.")
     except Exception as e:
         run_logger.error("Scrape-and-store flow failed: %s", e)
         send_flow_error_notification("scrape-and-store", str(e))
@@ -265,20 +253,44 @@ def scrape_and_store(
 def match_jobs_flow(
     user_id: str,
     limit: int = 50,
-    match_model: str = "openai/gpt-oss-120b:free",
-    match_provider: str | None = None,
-    match_fallback_model: str | None = None,
-    match_fallback_provider: str | None = None,
+    match_model: str = "models/gemini-3.1-flash-lite",
+    match_provider: str = "gemini",
+    match_fallback_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free",
+    match_fallback_provider: str = "openrouter",
+    chain_next: bool = False,
+    max_iterations: int = 3,
 ) -> int:
-    """Match unscored jobs for a user. Returns number of decisions saved."""
+    """Match unscored jobs for a user. Loops until all caught up or max_iterations. If chain_next=True, triggers 03→04."""
     run_logger = get_run_logger()
     try:
-        matched = match_pending_jobs(
-            user_id, limit=limit, match_model=match_model, match_provider=match_provider,
-            match_fallback_model=match_fallback_model, match_fallback_provider=match_fallback_provider,
-        )
-        run_logger.info("Match complete — %d decisions saved.", matched)
-        return matched
+        total_matched = 0
+        for iteration in range(1, max_iterations + 1):
+            remaining = count_unscored_jobs(user_id)
+            if remaining == 0:
+                break
+            run_logger.info("Iteration %d/%d: %d unscored jobs remaining.", iteration, max_iterations, remaining)
+            matched = match_pending_jobs(
+                user_id, limit=limit, match_model=match_model, match_provider=match_provider,
+                match_fallback_model=match_fallback_model, match_fallback_provider=match_fallback_provider,
+            )
+            total_matched += matched
+
+        run_logger.info("Match complete — %d total decisions saved.", total_matched)
+
+        if chain_next and total_matched > 0:
+            run_logger.info("chain_next=True — triggering 03-generator...")
+            generate_matched_flow(
+                user_id=user_id,
+                limit=limit,
+                generate_model=None,
+                generate_provider=None,
+                generate_fallback_model=None,
+                generate_fallback_provider=None,
+                chain_next=True,
+                max_iterations=max_iterations,
+            )
+
+        return total_matched
     except Exception as e:
         run_logger.error("Match flow failed: %s", e)
         send_flow_error_notification("match-jobs", str(e))
@@ -299,48 +311,51 @@ def generate_matched_flow(
     generate_provider: str | None = None,
     generate_fallback_model: str | None = None,
     generate_fallback_provider: str | None = None,
+    chain_next: bool = False,
+    max_iterations: int = 3,
 ):
     """
-    Generate documents for matched jobs that haven't been generated yet.
-
-    Parameters
-    ----------
-    user_id : str
-    limit : int
-        Max number of matched-but-unprocessed jobs to process this run.
-    generate_model : str | None
-        Override model for resume + cover letter (None → LLM_MODEL).
-    generate_provider : str | None
-        Provider for generation (None → LLM_PROVIDER).
-    generate_fallback_model : str | None
-        Fallback model if primary fails.
-    generate_fallback_provider : str | None
-        Fallback provider if primary fails.
+    Generate documents for matched jobs. Loops until all caught up or max_iterations. If chain_next=True, triggers 04-apply-agent.
     """
     run_logger = get_run_logger()
     try:
-        jobs = fetch_matched_jobs(user_id, limit=limit)
-        if not jobs:
-            run_logger.info("No matched-but-unprocessed jobs found.")
-            return
+        total_generated = 0
+        for iteration in range(1, max_iterations + 1):
+            remaining = count_matched_unprocessed_jobs(user_id)
+            if remaining == 0:
+                break
+            run_logger.info("Iteration %d/%d: %d matched-but-unprocessed jobs remaining.", iteration, max_iterations, remaining)
+            jobs = fetch_matched_jobs(user_id, limit=limit)
+            if not jobs:
+                break
 
-        run_logger.info("Generating documents for %d matched jobs.", len(jobs))
+            results = generate_application.map(
+                job_id=[j.id for j in jobs],
+                user_id=[user_id] * len(jobs),
+                generate_model=[generate_model] * len(jobs),
+                generate_provider=[generate_provider] * len(jobs),
+                generate_fallback_model=[generate_fallback_model] * len(jobs),
+                generate_fallback_provider=[generate_fallback_provider] * len(jobs),
+            )
 
-        results = generate_application.map(
-            job_id=[j.id for j in jobs],
-            user_id=[user_id] * len(jobs),
-            generate_model=[generate_model] * len(jobs),
-            generate_provider=[generate_provider] * len(jobs),
-            generate_fallback_model=[generate_fallback_model] * len(jobs),
-            generate_fallback_provider=[generate_fallback_provider] * len(jobs),
-        )
+            for r in results:
+                mark_processed(r)
+            total_generated += len(jobs)
 
-        for r in results:
-            mark_processed(r)
+        if total_generated:
+            dedup_count = dedup_generated_jobs(user_id)
+            if dedup_count:
+                run_logger.info("Post-generation dedup: %d duplicate jobs marked.", dedup_count)
 
-        dedup_count = dedup_generated_jobs(user_id)
-        if dedup_count:
-            run_logger.info("Post-generation dedup: %d duplicate jobs marked.", dedup_count)
+        if chain_next and total_generated > 0:
+            run_logger.info("chain_next=True — triggering 04-apply-agent...")
+            apply_agent_flow(
+                user_id=user_id,
+                limit=limit,
+                generate_model=generate_model,
+                generate_provider=generate_provider,
+                max_iterations=max_iterations,
+            )
     except Exception as e:
         run_logger.error("Generate flow failed: %s", e)
         send_flow_error_notification("generate-matched", str(e))
@@ -359,33 +374,36 @@ def apply_agent_flow(
     limit: int = 10,
     generate_model: str | None = None,
     generate_provider: str | None = None,
+    chain_next: bool = False,
+    max_iterations: int = 3,
 ):
     """
-    Process apply_instructions for matched-but-unapplied jobs using a single batch LLM call.
+    Process apply_instructions for matched-but-unapplied jobs. Loops until all caught up or max_iterations.
 
-    Parameters
-    ----------
-    user_id : str
-    limit : int
-        Max number of jobs to process this run.
-    generate_model : str | None
-    generate_provider : str | None
+    chain_next is accepted for pipeline consistency (no next flow to chain to).
     """
     run_logger = get_run_logger()
     try:
-        results = batch_process_applications(
-            user_id=user_id,
-            limit=limit,
-            model=generate_model,
-            provider=generate_provider,
-        )
-        run_logger.info("Batch apply complete — %d jobs processed.", len(results))
-        for r in results:
-            run_logger.info(
-                "Apply agent: job=%s action=%s email=%s whatsapp=%s",
-                r.get("job_id"), r.get("action"),
-                r.get("email_sent"), r.get("whatsapp_sent"),
+        total_processed = 0
+        for iteration in range(1, max_iterations + 1):
+            remaining = count_generated_unapplied_jobs(user_id)
+            if remaining == 0:
+                break
+            run_logger.info("Iteration %d/%d: %d unapplied jobs remaining.", iteration, max_iterations, remaining)
+            results = batch_process_applications(
+                user_id=user_id,
+                limit=limit,
+                model=generate_model,
+                provider=generate_provider,
             )
+            total_processed += len(results)
+            for r in results:
+                run_logger.info(
+                    "Apply agent: job=%s action=%s email=%s whatsapp=%s",
+                    r.get("job_id"), r.get("action"),
+                    r.get("email_sent"), r.get("whatsapp_sent"),
+                )
+        run_logger.info("Batch apply complete — %d jobs processed across %d iterations.", total_processed, iteration)
     except Exception as e:
         run_logger.error("Apply agent flow failed: %s", e)
         send_flow_error_notification("apply-agent", str(e))

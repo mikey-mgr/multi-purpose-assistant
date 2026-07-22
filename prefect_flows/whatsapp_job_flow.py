@@ -85,7 +85,7 @@ def process_whatsapp_job(
             user_text=f"USER PROFILE:\n{profile_json}",
             image_base64=image_base64,
             mimetype=mimetype,
-            max_tokens=8192,
+            max_tokens=12000,
             temperature=0.7,
         )
     except Exception as e:

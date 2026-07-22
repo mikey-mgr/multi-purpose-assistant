@@ -290,7 +290,7 @@ def generate_text_multimodal(
     mimetype: str = "image/jpeg",
     model: str | None = None,
     provider: str | None = None,
-    max_tokens: int = 8192,
+    max_tokens: int = 12000,
     temperature: float = 0.7,
 ) -> dict[str, Any]:
     """
@@ -314,7 +314,7 @@ def generate_text_multimodal(
     provider : str | None
         Must be ``"gemini"`` or ``None`` (defaults to settings.LLM_PROVIDER).
     max_tokens : int
-        Max output tokens (default 8192).
+        Max output tokens (default 12000).
     temperature : float
         LLM temperature (default 0.7).
 

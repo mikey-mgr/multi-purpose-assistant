@@ -205,10 +205,10 @@ def _to_float(v) -> float | None:
 def batch_match_jobs(
     user_id: str,
     limit: int = 50,
-    model: str = "openai/gpt-oss-120b:free",
-    provider: str | None = None,
-    fallback_model: str | None = None,
-    fallback_provider: str | None = None,
+    model: str = "models/gemini-3.1-flash-lite",
+    provider: str = "gemini",
+    fallback_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free",
+    fallback_provider: str = "openrouter",
 ) -> list[dict]:
     """
     Main entry point.

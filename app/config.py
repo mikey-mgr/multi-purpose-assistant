@@ -1,20 +1,16 @@
 """
 Application configuration.
 
-Precedence:
-  1. OS environment variables (PowerShell `$env:`) — highest priority
-  2. .env file (local development, gitignored)
-  3. Prefect Secret Blocks (when Prefect server is reachable)
-
-For production: store every key in Prefect, delete .env.
+Precedence (highest to lowest):
+  1. OS environment variables
+  2. Prefect Secret Blocks (when Prefect server is reachable)
+  3. .env file (gitignored, local dev fallback)
 """
 
 import logging
 import os
 from dotenv import load_dotenv
 
-# Load .env but never override existing OS env vars
-# (PowerShell session vars take precedence over .env)
 load_dotenv(override=False)
 
 logger = logging.getLogger(__name__)
@@ -50,7 +46,7 @@ class Settings:
     # ── Paths ───────────────────────────────────────────────────────
     OUTPUT_DIR: str = os.getenv("OUTPUT_DIR", "data")
 
-    # ── Key names in Prefect ───────────────────────────────────────
+    # ── Key names in Prefect Secret blocks ─────────────────────────
     _SECRET_KEYS = {
         "DB_CONN_URI": "db-conn-uri",
         "OPENROUTER_API_KEY": "openrouter-api-key",
@@ -66,8 +62,9 @@ class Settings:
     @classmethod
     def from_prefect(cls):
         """
-        Override .env values with Prefect Secret blocks.
-        Called once at import time.  Blocks named  app-config-<suffix>.
+        Override env/.env values with Prefect Secret blocks.
+        Blocks named `app-config-<suffix>`.  Silently skips if
+        the Prefect server is unreachable or a block is missing.
         """
         try:
             from prefect.blocks.system import Secret
@@ -79,14 +76,14 @@ class Settings:
                     if val:
                         setattr(cls, attr, val)
                 except Exception:
-                    pass  # block missing or server unreachable — keep .env
+                    pass  # block missing or server unreachable
         except ImportError:
-            pass  # prefect not installed — .env is fine
+            pass  # prefect not installed
         return cls
 
 
 settings = Settings()
-Settings.from_prefect()  # override .env with Prefect Secret blocks if reachable
+Settings.from_prefect()
 
 # Debug-friendly log (password masked)
 _uri_parts = settings.DB_CONN_URI.split("@")

@@ -159,6 +159,9 @@ class UserDocument(Base):
 
 class Skill(Base):
     __tablename__ = 'skills'
+    __table_args__ = (
+        UniqueConstraint('resume_id', 'skill_name', name='uq_skills_resume_skill'),
+    )
 
     id         = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
     resume_id  = Column(UUID(as_uuid=True), ForeignKey('resumes.id', ondelete='CASCADE'), nullable=False)
@@ -702,6 +705,18 @@ def get_unscored_jobs(user_id: str, limit: int = 50):
         session.close()
 
 
+def count_unscored_jobs(user_id: str) -> int:
+    """Count jobs not yet scored for this user."""
+    session = get_session()
+    try:
+        subq = session.query(JobMatch.job_id).filter(JobMatch.user_id == user_id)
+        return session.query(ScrapedJob).filter(
+            ~ScrapedJob.id.in_(subq)
+        ).count()
+    finally:
+        session.close()
+
+
 def get_deduped_unscored_jobs(user_id: str, limit: int = 50):
     """Fetch unscored jobs deduped by (company, normalized_title).
 
@@ -771,6 +786,32 @@ def get_matched_unprocessed_jobs(user_id: str, limit: int = 10):
         session.close()
 
 
+def count_matched_unprocessed_jobs(user_id: str) -> int:
+    """Count matched jobs without a generated resume for the user's active resume."""
+    session = get_session()
+    try:
+        resume = session.query(Resume).filter(
+            Resume.user_id == user_id,
+            Resume.is_active == True,
+        ).first()
+        if not resume:
+            return 0
+        matched_ids = session.query(JobMatch.job_id).filter(
+            JobMatch.user_id == user_id,
+            JobMatch.status == 'matched',
+        )
+        generated_ids = session.query(GeneratedDocument.job_id).filter(
+            GeneratedDocument.document_type == 'resume',
+            GeneratedDocument.resume_id == resume.id,
+        )
+        return session.query(ScrapedJob).filter(
+            ScrapedJob.id.in_(matched_ids),
+            ~ScrapedJob.id.in_(generated_ids),
+        ).count()
+    finally:
+        session.close()
+
+
 def get_generated_unapplied_jobs(user_id: str, limit: int = 10):
     """
     Fetch jobs that have documents generated but haven't been applied to yet.
@@ -781,6 +822,18 @@ def get_generated_unapplied_jobs(user_id: str, limit: int = 10):
             JobMatch.user_id == user_id,
             JobMatch.status == 'generated',
         ).limit(limit).all()
+    finally:
+        session.close()
+
+
+def count_generated_unapplied_jobs(user_id: str) -> int:
+    """Count jobs with documents generated but not yet applied."""
+    session = get_session()
+    try:
+        return session.query(JobMatch).filter(
+            JobMatch.user_id == user_id,
+            JobMatch.status == 'generated',
+        ).count()
     finally:
         session.close()
 

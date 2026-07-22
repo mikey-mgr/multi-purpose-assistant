@@ -102,7 +102,7 @@ Visit http://localhost:4200/deployments after starting `deployment.py`:
 ```json
 {
   "user_id": "ff0465b9-...",
-  "match_model": "openai/gpt-oss-120b:free",
+  "match_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
   "generate_model": "models/gemini-3.1-flash-lite",
   "match_provider": "openrouter",
   "generate_provider": "gemini",
@@ -180,7 +180,7 @@ from app.matcher import batch_match_jobs
 decisions = batch_match_jobs(
     user_id='ff0465b9-...',
     limit=5,
-    model='openai/gpt-oss-120b:free',
+    model='nvidia/nemotron-3-ultra-550b-a55b:free',
     provider='openrouter',
 )
 print(f'Matched: {sum(1 for d in decisions if d[\"status\"]==\"matched\")}/{len(decisions)}')

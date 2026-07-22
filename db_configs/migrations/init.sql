@@ -111,8 +111,18 @@ CREATE TABLE IF NOT EXISTS skills (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     resume_id  UUID REFERENCES resumes(id) ON DELETE CASCADE,
     skill_name VARCHAR(100) NOT NULL,
-    skill_type VARCHAR(50) NOT NULL  -- 'Hard Skill', 'Soft Skill', 'Tool'
+    skill_type VARCHAR(50) NOT NULL,  -- 'Hard Skill', 'Soft Skill', 'Tool'
+    UNIQUE(resume_id, skill_name)
 );
+
+-- Migration: add constraint if table already exists without it
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_skills_resume_skill'
+    ) THEN
+        ALTER TABLE skills ADD CONSTRAINT uq_skills_resume_skill UNIQUE (resume_id, skill_name);
+    END IF;
+END $$;
 
 -- ── System Prompts (versioned, mutation-safe) ────────────────────────
 

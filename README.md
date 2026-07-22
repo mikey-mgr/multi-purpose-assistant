@@ -74,31 +74,33 @@ Three entry points:
 psql -U postgres -f db_configs/migrations/init.sql
 ```
 
-### 2. Environment (`.env`)
+### 2. Secrets
+
+Secrets are resolved in this priority order:
+1. **OS env vars** — session-level override (`$env:KEY=val`)
+2. **OS Credential Manager** (via `keyring`) — primary storage for local dev
+3. **Prefect Secret Blocks** — legacy, when server is reachable
+4. **`.env` file** — fallback only (gitignored)
+
+**Recommended — store in Windows Credential Manager:**
+```powershell
+pip install keyring
+python -m app.secrets_store set OPENROUTER_API_KEY
+python -m app.secrets_store set DB_CONN_URI
+```
+
+Each command prompts for the value (hidden input). Stored in OS credential manager, not in any file.
+
+**Legacy — `.env` file** (only used if keyring has no value):
 ```
 DB_CONN_URI=postgresql://postgres:YOUR_PASSWORD@localhost:5432/ai_assistant
 LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=sk-or-...
-GEMINI_API_KEY=...
-LLM_MODEL=openai/gpt-4o
 ```
 
-> Alternatively, set keys via environment variables (skip `.env`):
-> ```powershell
-> # PowerShell
-> $env:DB_CONN_URI="postgresql://postgres:YOUR_PASSWORD@localhost:5432/ai_assistant"
-> $env:OPENROUTER_API_KEY="sk-or-..."
-> $env:GEMINI_API_KEY="..."
-> $env:LLM_PROVIDER="openrouter"
-> ```
-> ```cmd
-> :: CMD
-> set DB_CONN_URI=postgresql://postgres:YOUR_PASSWORD@localhost:5432/ai_assistant
-> set OPENROUTER_API_KEY=sk-or-...
-> set GEMINI_API_KEY=...
-> set LLM_PROVIDER=openrouter
-> ```
-> Set these in the same terminal before running any Python commands. They persist only for that session.
+**Legacy — env vars** (highest priority, session-only):
+```powershell
+$env:OPENROUTER_API_KEY="sk-or-..."
+```
 
 ### 3. Seed prompts
 ```bash
@@ -111,7 +113,7 @@ Run `python prefect_flows/deployment.py` to serve all 7 deployments:
 
 | Name | Schedule | Description |
 |------|----------|-------------|
-| `01-scraper` | `0 7-19/3 * * *` | Ingest listings from regional platforms. Auto-chains 02→03→04 when scheduled. Manual runs stop at ingest. |
+| `01-scraper` | `0 7-19/3 * * *` | Ingest listings from regional platforms. Pass `chain_next=True` to trigger 02→03→04. |
 | `02-matcher` | — | Batch-classify unscored jobs |
 | `03-generator` | — | Generate docs for matched jobs |
 | `04-apply-agent` | — | Send emails + WhatsApp notifications |
@@ -231,7 +233,7 @@ Each stage targets an independent provider + model:
 
 | Scenario | match_provider | match_model | generate_provider | generate_model |
 |----------|---------------|-------------|-------------------|----------------|
-| Default | *(→ LLM_PROVIDER)* | `openai/gpt-4o-mini` | *(→ LLM_PROVIDER)* | *(→ LLM_MODEL)* |
+| Default | *(→ LLM_PROVIDER)* | `nvidia/nemotron-3-ultra-550b-a55b:free` | *(→ LLM_PROVIDER)* | *(→ LLM_MODEL)* |
 | Match via Gemini, generate via GPT-4o | `gemini` | `gemini-2.0-flash` | `openrouter` | `openai/gpt-4o` |
 
 ## Source of Truth vs Generated Artifacts

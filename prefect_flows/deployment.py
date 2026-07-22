@@ -1,9 +1,12 @@
 """
 Prefect 3 deployment registration + serve.
 
-Serves five deployments (4 standard + 1 webhook-triggered).
-When ``01-scraper`` runs via schedule, it auto-chains 02→03→04.
-Manual runs stop at scrape.
+Serves 7 deployments. Pipeline chaining is opt-in via the ``chain_next``
+parameter on each flow.  Deployments do NOT pass ``chain_next=True``
+by default, so standalone runs stop at that stage.
+
+To chain the full pipeline:
+    prefect deployment run --param chain_next=True 01-scraper
 
 Usage:
     python prefect_flows/deployment.py
@@ -19,21 +22,24 @@ from prefect_flows.job_pipeline import (
     apply_agent_flow,
 )
 from prefect_flows.whatsapp_job_flow import process_whatsapp_job
+from prefect_flows.relationship_flows import check_referrals_flow, daily_reminder_flow
 
 _DEFAULTS = {
     "user_id": "ff0465b9-6512-4f47-8b5e-6f14a343a25d",
-    "match_model": "openai/gpt-oss-120b:free",
-    "match_fallback_model": "models/gemini-3.1-flash-lite",
+    "match_model": "models/gemini-3.1-flash-lite",
+    "match_fallback_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
     "generate_model": "models/gemini-3.1-flash-lite",
-    "generate_fallback_model": "openai/gpt-oss-120b:free",
-    "match_provider": "openrouter",
-    "match_fallback_provider": "gemini",
+    "generate_fallback_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "match_provider": "gemini",
+    "match_fallback_provider": "openrouter",
     "generate_provider": "gemini",
     "generate_fallback_provider": "openrouter",
-    "match_limit": 25,  # 02-matcher limit
-    "job_limit": 15,    # 03-generator limit
+    "match_limit": 15,  # 02-matcher limit
+    "job_limit": 5,    # 03-generator limit
     "scrape_site_names": None,  # None = all sites
     "scrape_max_pages": {"vacancybox": 1, "iharare": 2, "vacancymail": 2},
+    "chain_next": True,  # auto-chain 01→02→03→04 on scheduled runs
+    "max_iterations": 3,  # loop each step to catch up on remaining jobs
 }
 
 
@@ -44,7 +50,7 @@ def build():
             name="01-scraper",
             schedules=[CronSchedule(cron="0 7-19/3 * * *", timezone="Africa/Harare")],
             tags=["production", "scraping"],
-            description="Scrape job boards every hour (7am-10pm). Auto-chains 02→03→04 when scheduled.",
+            description="Scrape job boards every hour (7am-10pm). Auto-chains 02→03→04 on schedule. Run with --param chain_next=False to scrape only.",
             parameters={
                 "site_names": _DEFAULTS["scrape_site_names"],
                 "max_pages": _DEFAULTS["scrape_max_pages"],
@@ -59,6 +65,8 @@ def build():
                 "generate_fallback_provider": _DEFAULTS["generate_fallback_provider"],
                 "match_limit": _DEFAULTS["match_limit"],
                 "job_limit": _DEFAULTS["job_limit"],
+                "chain_next": _DEFAULTS["chain_next"],
+                "max_iterations": _DEFAULTS["max_iterations"],
             },
         ),
         # 2. Standalone matcher
@@ -73,6 +81,7 @@ def build():
                 "match_fallback_model": _DEFAULTS["match_fallback_model"],
                 "match_fallback_provider": _DEFAULTS["match_fallback_provider"],
                 "limit": _DEFAULTS["match_limit"],
+                "max_iterations": _DEFAULTS["max_iterations"],
             },
         ),
         # 3. Standalone generator (generate docs only, no apply)
@@ -87,6 +96,7 @@ def build():
                 "generate_fallback_model": _DEFAULTS["generate_fallback_model"],
                 "generate_fallback_provider": _DEFAULTS["generate_fallback_provider"],
                 "limit": _DEFAULTS["job_limit"],
+                "max_iterations": _DEFAULTS["max_iterations"],
             },
         ),
         # 4. Standalone apply agent (re-run for failed email sends)
@@ -99,6 +109,7 @@ def build():
                 "generate_model": _DEFAULTS["generate_model"],
                 "generate_provider": _DEFAULTS["generate_provider"],
                 "limit": _DEFAULTS["job_limit"],
+                "max_iterations": _DEFAULTS["max_iterations"],
             },
         ),
         # 5. WhatsApp image job (triggered by webhook, no schedule)
@@ -109,6 +120,22 @@ def build():
             parameters={
                 "user_id": _DEFAULTS["user_id"],
             },
+        ),
+        # 6. Referral checker — cross-reference matches with contacts
+        check_referrals_flow.to_deployment(
+            name="06-check-referrals",
+            tags=["production", "relationships"],
+            description="#7 Cross-reference job matches against your contact network. Sends WhatsApp referral alerts.",
+            parameters={
+                "user_id": _DEFAULTS["user_id"],
+            },
+        ),
+        # 7. Daily reminder (stub — not enabled)
+        daily_reminder_flow.to_deployment(
+            name="07-daily-reminder",
+            tags=["production", "relationships"],
+            description="#10 STUB — Daily relationship nurturing reminders. Set _ENABLED=True in reminder_engine.py and add a schedule.",
+            parameters={},
         ),
     )
 
