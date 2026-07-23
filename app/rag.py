@@ -11,7 +11,7 @@ from uuid import UUID
 
 from core.database import (
     get_session, User, Resume, WorkExperience, Project,
-    Education, Certification, Skill, UserDocument, ScrapedJob,
+    Education, Certification, Skill, UserDocument, Contact, ScrapedJob,
     search_jobs_hybrid, search_projects, search_experiences,
 )
 from app.schemas import UserProfile, JobDescription
@@ -217,10 +217,55 @@ def _fetch_raw_profile_data(user_id, resume_id=None):
         session.close()
 
 
+def get_user_references(user_id: UUID | str) -> tuple[list[dict], list[dict]]:
+    """Fetch references (contacts marked is_reference=true) for a user.
+    
+    Returns (safe_refs, full_refs):
+      safe_refs — AI-visible fields only: ref_id, name (title + surname), company, notes
+      full_refs — same fields + phone/email for YAML rendering (name is title + surname ONLY, no first name)
+    """
+    uid = UUID(user_id) if isinstance(user_id, str) else user_id
+    session = get_session()
+    try:
+        contacts = session.query(Contact).filter(
+            Contact.is_reference == True,
+            Contact.user_id == uid,
+        ).all()
+
+        safe = []
+        full = []
+        for c in contacts:
+            surname = c.last_name or ""
+            title_str = f"{c.title} " if c.title else ""
+            display_name = f"{title_str}{surname}".strip()
+
+            for target_list in (safe, full):
+                target_list.append({
+                    "ref_id": str(c.id),
+                    "name": display_name,
+                    "company": c.current_company or "",
+                    "notes": c.notes or "",
+                })
+            # full refs also carry phone/email for server-side injection
+            full[-1].update({
+                "email": c.email or "",
+                "phone": c.phone or "",
+            })
+
+        return (safe, full)
+    finally:
+        session.close()
+
+
 def _fetch_profile_with_pydantic(user_id, resume_id=None):
     """Convenience: returns both raw dicts and the Pydantic UserProfile."""
     data = _fetch_raw_profile_data(user_id, resume_id)
-    data["profile"] = assemble_user_profile(user_id, resume_id)
+    profile = assemble_user_profile(user_id, resume_id)
+    safe_refs, full_refs = get_user_references(user_id)
+    profile.references = safe_refs
+    data["references_safe"] = safe_refs
+    data["references_full"] = full_refs
+    data["profile"] = profile
     return data
 
 

@@ -22,16 +22,21 @@ listing sources ──► scrapers ──► PostgreSQL ──► matcher ──
                                     ┌── contacts ──► referral bridge (#7) ──► WhatsApp referral alerts
 PostgreSQL ──► job_matches ────────┤
                scraped_jobs         └── milestones ──► reminder engine (#10) ──► WhatsApp daily digest
-```
 
-Two decoupled stages:
-1. **Matcher** (`app/matcher.py`) — cheap LLM batch-classifies unscored jobs as matched/rejected
-2. **Generator** (`app/orchestrator.py`) — single LLM call per matched job outputs resume JSON + cover letter + apply_details. Renders PDF via RenderCV + DOCX cover letter. Saves to `job_matches` + `generated_documents`.
+WhatsApp user ──► Evolution API ──► webhook server ──► rule-based router
+                    (localhost:8080)   (port 8055)      (ends with ? = query, else = job)
+                                                          │
+                                    ┌─────────────────────┤
+                                    ▼                     ▼
+                          process-whatsapp-text    process-whatsapp-job
+                          (parse + generate +      (vision + parse +
+                           send)                    generate + send)
+```
 
 Three entry points:
 - **Library** — import `app.*` directly (no Prefect needed)
 - **Prefect flows** — scheduled/triggered orchestration with retries + UI
-- **WhatsApp webhook** — FastAPI server receives job posting images via WhatsApp
+- **WhatsApp webhook** — FastAPI server receives job postings (images + text) via Evolution API
 
 ## Project Structure
 
@@ -40,25 +45,26 @@ Three entry points:
 │   ├── orchestrator.py        # process_job_for_user(), batch_process_applications()
 │   ├── matcher.py             # batch_match_jobs()
 │   ├── llm.py                 # LLM calls (OpenRouter / Gemini) + generate_text_multimodal()
-│   ├── rag.py                 # Profile assembly + hybrid search
-│   ├── rendercv_renderer.py   # YAML → PDF (RenderCV)
-│   ├── document_generator.py  # Cover letter DOCX
+│   ├── rag.py                 # Profile assembly + hybrid search + reference handling
+│   ├── rendercv_renderer.py   # YAML → PDF (RenderCV) + reference injection
+│   ├── document_generator.py  # Cover letter DOCX + merged PDF builder
 │   ├── email_sender.py        # Gmail SMTP sender
-│   ├── whatsapp_notifier.py   # WhatsApp message sender
+│   ├── whatsapp_notifier.py   # WhatsApp message + document sender
 │   ├── config.py              # Settings from env vars / Prefect secrets
 │   ├── schemas.py             # Pydantic models
 │   ├── apply_agent.py         # WhatsApp notification composition
-│   ├── webhook_server.py      # FastAPI: POST /api/webhooks/whatsapp-image
+│   ├── webhook_server.py      # FastAPI: POST /api/webhooks/evolution (replaces n8n)
 │   ├── contact_manager.py     # #7 Referral matching + #9 Contact CRUD + import
-│   └── reminder_engine.py     # #10 Stub: daily nurturing reminders (_ENABLED = False)
+│   ├── reminder_engine.py     # #10 Stub: daily nurturing reminders (_ENABLED = False)
+│   └── secrets_store.py       # OS credential manager (Windows Credential Manager via keyring)
 ├── core/
 │   └── database.py            # SQLAlchemy models + CRUD + vector search + relationship tables
 ├── scrapers/                  # Data ingestion modules
 ├── prefect_flows/
 │   ├── job_pipeline.py        # 4 flows: scrape-and-store, match-jobs, generate-matched, apply-agent
-│   ├── whatsapp_job_flow.py   # process-whatsapp-job: image→parse→match→generate→email→WhatsApp
+│   ├── whatsapp_job_flow.py   # Image + text WhatsApp flows: parse → match → generate → email → WhatsApp
 │   ├── relationship_flows.py  # #7 check-referrals flow (active) + #10 daily-reminder flow (stub)
-│   ├── deployment.py          # Register + serve all 5 deployments
+│   ├── deployment.py          # Register + serve all 6 deployments
 │   └── setup_blocks.py        # Prefect Secret blocks from .env
 ├── scripts/
 │   └── seed_prompts.py        # Programmatic prompt seed (upserts)
@@ -109,15 +115,16 @@ python scripts/seed_prompts.py
 
 ## Deployments
 
-Run `python prefect_flows/deployment.py` to serve all 7 deployments:
+Run `python prefect_flows/deployment.py` to serve all 6 deployments:
 
 | Name | Schedule | Description |
 |------|----------|-------------|
 | `01-scraper` | `0 7-19/3 * * *` | Ingest listings from regional platforms. Pass `chain_next=True` to trigger 02→03→04. |
 | `02-matcher` | — | Batch-classify unscored jobs |
 | `03-generator` | — | Generate docs for matched jobs |
-| `04-apply-agent` | — | Send emails + WhatsApp notifications |
-| `05-whatsapp-image-job` | — | Parse job image from webhook → apply → notify (triggered via FastAPI) |
+| `04-apply-agent` | — | Batch-process generated matches: send emails + WhatsApp notifications |
+| `05-whatsapp-image-job` | — | Parse job image from Evolution API webhook → apply → notify |
+| `05b-whatsapp-text-job` | — | Parse job text from Evolution API webhook → apply → notify |
 | `06-check-referrals` | — | **#7** Cross-reference matches against contacts; sends WhatsApp referral alerts |
 | `07-daily-reminder` | — | **#10** Daily nurturing reminders (stub — not scheduled; enable in `reminder_engine.py`) |
 
@@ -161,7 +168,7 @@ Set env vars for any other keys in the script (`SERPAPI_API_KEY`, `GMAIL_ADDRESS
 conda activate prefect_env
 python -m prefect_flows.deployment
 ```
-Registers all 5 deployments and starts an in-process runner.
+Registers all 6 deployments and starts an in-process runner.
 
 **Manual run** (any terminal):
 ```bash
@@ -177,33 +184,77 @@ prefect deployment run 05-whatsapp-image-job
 | `data_eng` | `requirements.txt` minus `prefect` | App logic, scrapers, tests |
 | `prefect_env` | `requirements.txt` (full) | Prefect server + workers + deployment |
 
-## WhatsApp Job Webhook
+## WhatsApp Webhook (replaces n8n)
 
 Start the FastAPI server:
 ```bash
-python -m app.webhook_server          # default port 8000
+python -m app.webhook_server          # port 8055
 ```
 
-Your WhatsApp host sends:
+The server listens for webhooks from **Evolution API** at `http://localhost:8080`:
+
 ```http
-POST http://localhost:8055/api/webhooks/whatsapp-image
-apikey: your_api_key
+POST http://localhost:8055/api/webhooks/evolution
+apikey: your_whatsapp_api_key
 
-{"imageBase64": "<base64>", "mimetype": "image/jpeg"}
+{
+  "event": "messages.upsert",
+  "instanceId": "...",
+  "data": {
+    "key": { "remoteJid": "263771906135@s.whatsapp.net", "fromMe": false },
+    "message": { "conversation": "..." }  // or "imageMessage": {...}
+  }
+}
 ```
 
-The server validates the API key, image size (≤10MB) and type (jpeg/png/webp/gif), then triggers the `process-whatsapp-job` flow which:
+### Routing
+
+The server:
+1. Drops messages where `fromMe = true` or chat is not an individual (group/broadcast/status)
+2. Drops messages from phone numbers not in the allowed prefix list `[263788667111, 263773393934, 263771906135]`
+3. Routes based on message type:
+   - **Image messages** → `process-whatsapp-job` (vision LLM call)
+   - **Text messages** → rule-based intent router:
+     - Ends with `?` → data query (show matches, answer questions, handle greetings)
+     - Otherwise → `process-whatsapp-text` (parse job posting + generate + apply)
+
+### Image flow (`process-whatsapp-job`)
+
 1. Sends image + user profile to Gemini vision in one LLM call
 2. Parses job fields, match score, resume overrides, cover letter, apply_details, and WhatsApp text
 3. Inserts ScrapedJob (`site='whatsapp'`) + JobMatch
 4. Renders resume PDF + cover letter DOCX
-5. Emails application if `proceed=apply_now` + action=email
+5. Emails application if `proceed=apply_now` + action=email + no cooldown
 6. Sends WhatsApp notification with score + gaps + outcome
 7. Sets status to `applied` or `waiting` (needs_docs/needs_info)
 
-On failure at any step, an error WhatsApp is sent back.
+### Text flow (`process-whatsapp-text`)
 
-### Per-job flow
+Same as image flow but:
+- Uses text-only LLM call instead of vision
+- Parses job posting from raw text
+- After job processing, sends a WhatsApp message back including the `whatsapp_text` field from the LLM output
+
+### Data query flow
+
+When a message ends with `?`, the server:
+1. Fetches the 20 most recent non-rejected job matches (with job URLs)
+2. Sends them to the `whatsapp_data_query_v1` prompt
+3. Returns a conversational answer via WhatsApp
+
+### Cooldown
+
+The system applies a **7-day cooldown** per recipient email address to avoid spamming the same employer:
+
+| State | Behaviour |
+|-------|-----------|
+| Cooldown active (`cooldown_until > now`) | Email skipped, WhatsApp says "cooldown until YYYY-MM-DD" |
+| Cooldown expired, job scraped during cooldown | `expired_discard` — job is stale, discarded |
+| Cooldown expired, job newer than cooldown | Email sent normally |
+
+Keyed on `(recipient_email, user_id)`. Stored in `email_cooldowns` table.
+
+### Per-job flows
 
 ```
 01-scraper (cron) ──► 02-matcher ──► 03-generator ──► 04-apply-agent
@@ -212,20 +263,22 @@ On failure at any step, an error WhatsApp is sent back.
 05-whatsapp-image-job ────┘                                  │
 (webhook trigger)                                            │
                                                              ▼
-                                                    WhatsApp notification
+05b-whatsapp-text-job ────┘                         WhatsApp notification
+(webhook trigger)
 ```
 
 ## Key Modules
 
 | Module | What it does |
 |--------|-------------|
-| `core.database` | ORM models, CRUD, pgvector hybrid search, prompt management |
+| `core.database` | ORM models, CRUD, pgvector hybrid search, prompt management, cooldown tracking |
 | `app.llm` | `generate_text()`, `generate_text_multimodal()`, `generate_embedding()` — routes through OpenRouter or Gemini |
-| `app.orchestrator` | `process_job_for_user()` — RAG → LLM → YAML → PDF → snapshot |
-| `app.rag` | Profile assembly + hybrid (keyword + semantic) job search |
-| `app.rendercv_renderer` | YAML dict → RenderCV PDF |
+| `app.orchestrator` | `process_job_for_user()` — RAG → LLM → YAML → PDF → snapshot; `batch_process_applications()` — batch email + WhatsApp |
+| `app.rag` | Profile assembly + hybrid (keyword + semantic) job search + reference management |
+| `app.rendercv_renderer` | YAML dict → RenderCV PDF (Harvard theme) + server-side reference injection |
+| `app.document_generator` | Cover letter DOCX + merged PDF builder |
 | `app.email_sender` | Gmail SMTP (no test redirect) |
-| `app.whatsapp_notifier` | WhatsApp Cloud API messages |
+| `app.whatsapp_notifier` | WhatsApp Cloud API messages + documents |
 
 ## Provider Override
 
@@ -240,7 +293,7 @@ Each stage targets an independent provider + model:
 
 | What | Stored in |
 |------|-----------|
-| Raw profile | `users`, `work_experience`, `education`, `projects`, `skills`, `certifications` |
+| Raw profile | `users`, `work_experience`, `education`, `projects`, `skills`, `certifications`, `contacts` |
 | Per-job rewrite | LLM output (discarded after YAML) |
 | Final resume PDF | `generated_documents` table + `data/rendercv_output/` |
 
@@ -259,9 +312,33 @@ System prompts stored in DB `prompts` table and seeded via `scripts/seed_prompts
 | Prompt | Purpose |
 |--------|---------|
 | `job_matcher_v1` | Batch-classify unscored jobs |
-| `ats_and_cover_v1` | Resume JSON + cover letter + apply_details + gap analysis |
+| `ats_and_cover_v1` | Resume JSON + cover letter + apply_details + gap analysis (scrape flow) |
 | `whatsapp_notify_batch_v1` | Compose WhatsApp notifications for batch results |
 | `whatsapp_image_job_v1` | Parse job image → match → generate → WhatsApp text (multimodal) |
+| `whatsapp_text_job_v1` | Parse job text → match → generate → WhatsApp text |
+| `whatsapp_data_query_v1` | Answer user data questions / handle greetings (uses recent matches) |
+
+### Prompt rules (applied across all generate prompts)
+
+- **Summary** opens with the employer's pain point, first-person, never states the user already works there
+- **Experience bullets**: strict caps — max 3 per project entry, max 4 per experience entry (hard limits, per entry)
+- **Skills**: max 4 categories, max 5 skills per category, ordered by relevance
+- **References**: only included if JD explicitly asks; name = title + surname only (first name never exposed to AI); phone/email injected server-side
+- **User photo**: `user_photo` doc type included in `required_docs` only when JD asks for a photograph/profile picture
+- **merged_pdf flag**: LLM decides if the employer wants a single merged PDF (all docs combined)
+
+## Document Types
+
+| Doc Type | Label | Source |
+|----------|-------|--------|
+| `resume` | CV / Resume | Auto-generated (generated_documents) |
+| `cover_letter` | Cover Letter | Auto-generated (generated_documents) |
+| `education_cert` | Education Certificate | `education.document_path` |
+| `certification_cert` | Professional Certification | `certifications.document_path` |
+| `id_doc` | National ID / Proof of Age | `user_documents` table |
+| `drivers_license` | Driver's License | `user_documents` table |
+| `portfolio_link` | Portfolio Link | `user_documents` table |
+| `user_photo` | User Profile Photo | `user_documents` table |
 
 ## Relationship Nurturing System
 
@@ -301,7 +378,7 @@ psql -d ai_assistant -f db_configs/migrations/add_relationship_tables.sql
 
 | Table | Purpose | Key fields for #7 |
 |-------|---------|-------------------|
-| `contacts` | Your network (not the same as `users` — that's you) | `current_company`, `job_title`, `email`, `phone` |
+| `contacts` | Your network (not the same as `users` — that's you) | `current_company`, `job_title`, `email`, `phone`, `title`, `is_reference` |
 | `contact_profiles` | Layer 2/3 strategic data | `professional_summary`, `business_interests`, `hobbies`, `birthday`, `relationship_strength` |
 | `contact_family` | Spouse/kids info | `family_member_name`, `relationship`, `birthday` |
 | `contact_education` | Schools attended | `institution`, `degree_type`, `graduation_year` |

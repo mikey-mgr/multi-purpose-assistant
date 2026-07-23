@@ -193,6 +193,7 @@ def _fallback_message(contact: dict, job: dict) -> str:
 def create_contact(
     first_name: str,
     last_name: str,
+    user_id: str | UUID | None = None,
     email: str | None = None,
     phone: str | None = None,
     current_company: str | None = None,
@@ -206,7 +207,9 @@ def create_contact(
     """Create a new contact record."""
     session = get_session()
     try:
+        uid = UUID(user_id) if isinstance(user_id, str) else user_id
         contact = Contact(
+            user_id=uid,
             first_name=first_name,
             last_name=last_name,
             email=email,
@@ -334,7 +337,7 @@ def add_contact_to_group(contact_id: str, group_name: str) -> bool:
         session.close()
 
 
-def import_contacts_bulk(contacts_list: list[dict]) -> tuple[int, int]:
+def import_contacts_bulk(contacts_list: list[dict], user_id: str | UUID | None = None) -> tuple[int, int]:
     """Import multiple contacts at once.
     
     Returns (created_count, updated_count).
@@ -343,6 +346,7 @@ def import_contacts_bulk(contacts_list: list[dict]) -> tuple[int, int]:
     created = 0
     updated = 0
     session = get_session()
+    uid = UUID(user_id) if isinstance(user_id, str) else user_id
     try:
         for data in contacts_list:
             email = data.get("email")
@@ -359,6 +363,7 @@ def import_contacts_bulk(contacts_list: list[dict]) -> tuple[int, int]:
                     continue
 
             contact = Contact(
+                user_id=uid,
                 first_name=data.get("first_name", ""),
                 last_name=data.get("last_name", ""),
                 email=email,

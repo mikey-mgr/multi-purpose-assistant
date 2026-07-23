@@ -21,7 +21,7 @@ from prefect_flows.job_pipeline import (
     generate_matched_flow,
     apply_agent_flow,
 )
-from prefect_flows.whatsapp_job_flow import process_whatsapp_job
+from prefect_flows.whatsapp_job_flow import process_whatsapp_job, process_whatsapp_text
 from prefect_flows.relationship_flows import check_referrals_flow, daily_reminder_flow
 
 _DEFAULTS = {
@@ -117,6 +117,15 @@ def build():
             name="05-whatsapp-image-job",
             tags=["production", "whatsapp"],
             description="Process a job posting image received via WhatsApp webhook.",
+            parameters={
+                "user_id": _DEFAULTS["user_id"],
+            },
+        ),
+        # 5b. WhatsApp text job (triggered by webhook, no schedule)
+        process_whatsapp_text.to_deployment(
+            name="05b-whatsapp-text-job",
+            tags=["production", "whatsapp"],
+            description="Process WhatsApp text: routes job postings and data queries, then executes.",
             parameters={
                 "user_id": _DEFAULTS["user_id"],
             },

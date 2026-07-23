@@ -120,6 +120,8 @@ def generate_text(
         max_tokens=prompt_meta.max_tokens or 2048,
     )
 
+    if not response.choices:
+        raise RuntimeError(f"LLM response for '{prompt_name}' has null/empty choices — provider-side issue")
     result = response.choices[0].message.content
     logger.info(
         "LLM response for '%s': %d chars, %d tokens",

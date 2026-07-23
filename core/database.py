@@ -320,6 +320,8 @@ class Contact(Base):
     __tablename__ = 'contacts'
 
     id               = Column(UUID(as_uuid=True), primary_key=True, server_default=text('gen_random_uuid()'))
+    user_id          = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'))  ## owner of this contact/reference
+    title            = Column(String(20))                              ## Mr, Mrs, Ms, Dr, Prof, etc.
     first_name       = Column(String(100), nullable=False)
     last_name        = Column(String(100), nullable=False)
     email            = Column(String(255))
@@ -329,6 +331,7 @@ class Contact(Base):
     linkedin_url     = Column(String(255))
     location_city    = Column(String(100))
     location_country = Column(String(100))
+    is_reference     = Column(Boolean, default=False)                  ## marked as an employment/character reference
     source           = Column(String(50), default='manual')
     source_id        = Column(String(255))
     notes            = Column(Text)
@@ -856,6 +859,47 @@ def get_generated_jobs_with_matches(user_id: str, limit: int = 10):
             }
             for job, match in rows
         ]
+    finally:
+        session.close()
+
+
+def get_recent_matches(user_id: str, limit: int = 20) -> list[dict]:
+    """Return the most recent non-rejected job matches with full details."""
+    session = get_session()
+    try:
+        uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+        rows = (
+            session.query(
+                ScrapedJob.site,
+                ScrapedJob.id.label("job_id"),
+                ScrapedJob.company,
+                ScrapedJob.title,
+                func.left(ScrapedJob.description, 50).label("description"),
+                JobMatch.status,
+                JobMatch.score,
+                JobMatch.reason,
+                JobMatch.proceed,
+                ScrapedJob.scraped_at,
+                JobMatch.required_docs,
+                JobMatch.apply_recipient,
+                JobMatch.expiry_date,
+                ScrapedJob.location,
+                ScrapedJob.job_url,
+                ScrapedJob.apply_instructions,
+            )
+            .join(JobMatch, ScrapedJob.id == JobMatch.job_id)
+            .filter(JobMatch.user_id == uid, JobMatch.status != "rejected")
+            .order_by(ScrapedJob.id.desc(), JobMatch.score.desc())
+            .limit(limit)
+            .all()
+        )
+        columns = [
+            "site", "job_id", "company", "title", "description",
+            "status", "score", "reason", "proceed", "scraped_at",
+            "required_docs", "apply_recipient", "expiry_date",
+            "location", "job_url", "apply_instructions",
+        ]
+        return [dict(zip(columns, row)) for row in rows]
     finally:
         session.close()
 

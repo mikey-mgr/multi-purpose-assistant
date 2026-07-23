@@ -110,6 +110,7 @@ def process_job_for_user(
             projects=profile_data["projects"],
             skills=profile_data["skills"],
             llm_section_overrides=resume_overrides,
+            references_full=profile_data.get("references_full"),
         )
         cv_yaml_str = json.dumps(cv_dict, indent=2)
 
@@ -465,18 +466,19 @@ def batch_process_applications(
             job.id, required_docs, missing_docs, list(docs.get("misc_docs", {}).keys()),
         )
 
-        # Generate merged PDF — for email (attach) or external_url (send via WhatsApp)
+        # Generate merged PDF — only if LLM said employer wants one file
         merged_pdf_path = None
-        if (action == "email" and not missing_docs and proceed == "apply_now") or (action == "external_url" and not missing_docs):
-            try:
-                from app.document_generator import build_merged_pdf
-                merged_pdf_path = build_merged_pdf(
-                    required_docs=required_docs,
-                    docs=docs,
-                    job_id=job.id,
-                )
-            except Exception as e:
-                logger.warning("Failed to build merged PDF for job %s: %s", job.id, e)
+        if match.merged_pdf and not missing_docs:
+            if (action == "email" and proceed == "apply_now") or action == "external_url":
+                try:
+                    from app.document_generator import build_merged_pdf
+                    merged_pdf_path = build_merged_pdf(
+                        required_docs=required_docs,
+                        docs=docs,
+                        job_id=job.id,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to build merged PDF for job %s: %s", job.id, e)
 
         email_sent = False
         # Only send email if: action is email, recipient exists, no missing docs, AND proceed says apply_now

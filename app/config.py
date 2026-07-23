@@ -34,6 +34,7 @@ class Settings:
 
     # ── Services ────────────────────────────────────────────────────
     SERPAPI_API_KEY: str | None = os.getenv("SERPAPI_API_KEY")
+    EVOLUTION_API_URL: str = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
 
     # ── Email (Gmail SMTP) ──────────────────────────────────────────
     GMAIL_ADDRESS: str | None = os.getenv("GMAIL_ADDRESS")

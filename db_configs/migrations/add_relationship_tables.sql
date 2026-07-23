@@ -10,17 +10,20 @@
 
 CREATE TABLE IF NOT EXISTS contacts (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id          UUID REFERENCES users(id) ON DELETE CASCADE,      -- owner of this contact/reference
+    title            VARCHAR(20),                    -- Mr, Mrs, Ms, Dr, Prof, etc.
     first_name       VARCHAR(100) NOT NULL,
     last_name        VARCHAR(100) NOT NULL,
     email            VARCHAR(255),
     phone            VARCHAR(20),
-    current_company  VARCHAR(150),       -- matches scraped_jobs.company for referral matching
+    current_company  VARCHAR(150),                   -- matches scraped_jobs.company for referral matching
     job_title        VARCHAR(150),
     linkedin_url     VARCHAR(255),
     location_city    VARCHAR(100),
     location_country VARCHAR(100),
-    source           VARCHAR(50) DEFAULT 'manual',  -- 'manual', 'linkedin_export', 'google_contacts', 'whatsapp'
-    source_id        VARCHAR(255),                  -- external ID from the source
+    is_reference     BOOLEAN DEFAULT FALSE,          -- marked as an employment/character reference
+    source           VARCHAR(50) DEFAULT 'manual',   -- 'manual', 'linkedin_export', 'google_contacts', 'whatsapp'
+    source_id        VARCHAR(255),                   -- external ID from the source
     notes            TEXT,
     last_imported_at TIMESTAMP WITH TIME ZONE,
     created_at       TIMESTAMP WITH TIME ZONE DEFAULT timezone('Africa/Harare', CURRENT_TIMESTAMP),
@@ -214,3 +217,20 @@ JOIN contacts c ON c.id = cm.contact_id
 WHERE cm.milestone_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '14 days'
   AND cm.acknowledged_at IS NULL
 ORDER BY cm.milestone_date;
+
+-- ── Migration: add contact columns to existing table ─────────────────
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'contacts' AND column_name = 'user_id') THEN
+        ALTER TABLE contacts ADD COLUMN user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+        RAISE NOTICE 'Added user_id column to contacts';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'contacts' AND column_name = 'title') THEN
+        ALTER TABLE contacts ADD COLUMN title VARCHAR(20);
+        RAISE NOTICE 'Added title column to contacts';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'contacts' AND column_name = 'is_reference') THEN
+        ALTER TABLE contacts ADD COLUMN is_reference BOOLEAN DEFAULT FALSE;
+        RAISE NOTICE 'Added is_reference column to contacts';
+    END IF;
+END $$;

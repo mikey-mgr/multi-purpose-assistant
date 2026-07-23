@@ -20,6 +20,7 @@ class UserProfile(BaseModel):
     education: list[dict] = Field(default_factory=list)
     certifications: list[dict] = Field(default_factory=list)
     documents: dict[str, str] = Field(default_factory=dict)  # doc_type → label, e.g. {"id_doc": "National ID"}
+    references: list[dict] = Field(default_factory=list)  # safe fields only: [{ref_id, name, company, notes}]
 
 
 class JobDescription(BaseModel):
