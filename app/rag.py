@@ -65,6 +65,16 @@ def assemble_user_profile(user_id: UUID, resume_id: UUID | None = None) -> UserP
             UserDocument.user_id == user.id
         ).all()
 
+        documents = {d.doc_type: d.label or d.doc_type for d in user_docs}
+        edu_docs = [e for e in education if e.document_path]
+        if edu_docs:
+            labels = [f"{e.degree_type or 'Qualification'} in {e.field_of_study or 'N/A'}" for e in edu_docs]
+            documents["education_cert"] = "; ".join(labels)
+        cert_docs = [c for c in certifications if c.document_path]
+        if cert_docs:
+            labels = [f"{c.cert_name} ({c.issuing_organization or 'N/A'})" for c in cert_docs]
+            documents["certification_cert"] = "; ".join(labels)
+
         return UserProfile(
             first_name=user.first_name,
             last_name=user.last_name,
@@ -74,7 +84,7 @@ def assemble_user_profile(user_id: UUID, resume_id: UUID | None = None) -> UserP
             location=f"{user.location_city or ''}, {user.location_country or ''}".strip(", "),
             professional_summary=resume.professional_summary,
             skills=[s.skill_name for s in skills],
-            documents={d.doc_type: d.label or d.doc_type for d in user_docs},
+            documents=documents,
             work_experience=[{
                 "company": e.company_name,
                 "title": e.job_title,

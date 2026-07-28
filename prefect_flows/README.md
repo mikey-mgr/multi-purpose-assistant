@@ -103,7 +103,7 @@ Visit http://localhost:4200/deployments after starting `deployment.py`:
 {
   "user_id": "ff0465b9-...",
   "match_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
-  "generate_model": "models/gemini-3.1-flash-lite",
+  "generate_model": "models/gemini-3.5-flash-lite",
   "match_provider": "openrouter",
   "generate_provider": "gemini",
   "match_limit": 50,
@@ -193,7 +193,7 @@ docs = process_job_for_user(
     user_id='ff0465b9-...',
     job_id=123,
     provider='gemini',
-    model='models/gemini-3.1-flash-lite',
+    model='models/gemini-3.5-flash-lite',
 )
 "
 

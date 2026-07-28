@@ -205,7 +205,7 @@ def _to_float(v) -> float | None:
 def batch_match_jobs(
     user_id: str,
     limit: int = 50,
-    model: str = "models/gemini-3.1-flash-lite",
+    model: str = "models/gemini-3.5-flash-lite",
     provider: str = "gemini",
     fallback_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free",
     fallback_provider: str = "openrouter",

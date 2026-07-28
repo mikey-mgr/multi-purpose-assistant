@@ -75,7 +75,7 @@ def store_jobs_task(jobs_df: "pd.DataFrame") -> int:
 def match_pending_jobs(
     user_id: str,
     limit: int = 50,
-    match_model: str = "models/gemini-3.1-flash-lite",
+    match_model: str = "models/gemini-3.5-flash-lite",
     match_provider: str = "gemini",
     match_fallback_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free",
     match_fallback_provider: str = "openrouter",
@@ -253,7 +253,7 @@ def scrape_and_store(
 def match_jobs_flow(
     user_id: str,
     limit: int = 50,
-    match_model: str = "models/gemini-3.1-flash-lite",
+    match_model: str = "models/gemini-3.5-flash-lite",
     match_provider: str = "gemini",
     match_fallback_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free",
     match_fallback_provider: str = "openrouter",

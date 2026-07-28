@@ -19,7 +19,7 @@ from prefect import flow, get_run_logger
 
 from app.config import settings
 from app.llm import generate_text, generate_text_with_fallback, generate_text_multimodal
-from app.orchestrator import _render_pdf_with_retry
+from app.orchestrator import _render_pdf_with_retry, _doc_available
 from app.document_generator import ensure_output_dir, cover_letter_to_docx
 from app.utils import unique_path
 from app.rendercv_renderer import build_yaml_dict
@@ -58,6 +58,10 @@ def process_whatsapp_job(
     image_base64: str,
     mimetype: str = "image/jpeg",
     user_id: str | None = None,
+    generate_model: str | None = None,
+    generate_provider: str | None = None,
+    generate_fallback_model: str | None = None,
+    generate_fallback_provider: str | None = None,
 ):
     """Process a job posting image received via WhatsApp webhook."""
     run_logger = get_run_logger()
@@ -87,6 +91,8 @@ def process_whatsapp_job(
             user_text=f"USER PROFILE:\n{profile_json}",
             image_base64=image_base64,
             mimetype=mimetype,
+            model=generate_model,
+            provider=generate_provider,
             max_tokens=12000,
             temperature=0.7,
         )
@@ -200,7 +206,12 @@ def process_whatsapp_job(
                 resume_id=resume_id,
                 job_id=db_job.id,
                 document_type="resume",
+                rendercv_yaml=json.dumps(cv_dict, indent=2),
+                content=raw,
                 pdf_path=pdf_path,
+                prompt_name=_WHATSAPP_PROMPT,
+                model=result.get("model"),
+                tokens_used=result.get("tokens_used", 0),
             )
             run_logger.info("Resume PDF saved: %s", pdf_path)
 
@@ -216,7 +227,11 @@ def process_whatsapp_job(
                 resume_id=resume_id,
                 job_id=db_job.id,
                 document_type="cover_letter",
+                content=cover_letter_text,
                 docx_path=docx_path,
+                prompt_name=_WHATSAPP_PROMPT,
+                model=result.get("model"),
+                tokens_used=result.get("tokens_used", 0),
             )
             run_logger.info("Cover letter saved: %s", docx_path)
 
@@ -271,6 +286,7 @@ def process_whatsapp_job(
 
     docs = get_application_documents(str(resume_id), db_job.id) if resume_id else {}
     req_docs = apply_details.get("required_docs", ["resume"])
+    missing_docs = [d for d in req_docs if not _doc_available(d, docs)]
 
     # ── Cooldown check: never email same recipient within 7 days ──
     _cooldown_until = None
@@ -294,7 +310,7 @@ def process_whatsapp_job(
                     )
                     _cooldown_until = "expired_discard"
 
-    if action == "email" and recip and not existing_app and not _cooldown_until:
+    if action == "email" and recip and not existing_app and not _cooldown_until and proceed == "apply_now" and not missing_docs:
         subject = apply_details.get("subject") or f"Application: {job_data.get('title')}"
         body = apply_details.get("body") or ""
 
@@ -374,8 +390,10 @@ def process_whatsapp_job(
     # 10. Update status
     if proceed == "skip_dedup":
         new_status = "duplicate"
+    elif proceed != "apply_now" or action in ("unknown", "external_url"):
+        new_status = "waiting"
     else:
-        new_status = "waiting" if proceed != "apply_now" else "applied"
+        new_status = "applied"
     update_job_match_status(db_job.id, uid, new_status)
 
     run_logger.info("WhatsApp job complete — #%d %s status=%s email=%s",
@@ -436,6 +454,10 @@ def _build_job_pipeline_from_llm(
     profile_data: dict,
     uid: str,
     run_logger,
+    llm_raw: str = "",
+    llm_model: str = "unknown",
+    tokens_used: int = 0,
+    prompt_name: str = "whatsapp_text_job_v1",
 ) -> dict:
     """
     Shared job pipeline logic for text and image flows.
@@ -532,7 +554,12 @@ def _build_job_pipeline_from_llm(
                 resume_id=resume_id,
                 job_id=db_job.id,
                 document_type="resume",
+                rendercv_yaml=json.dumps(cv_dict, indent=2),
+                content=llm_raw,
                 pdf_path=pdf_path,
+                prompt_name=prompt_name,
+                model=llm_model,
+                tokens_used=tokens_used,
             )
 
         if cover_letter_text:
@@ -547,7 +574,11 @@ def _build_job_pipeline_from_llm(
                 resume_id=resume_id,
                 job_id=db_job.id,
                 document_type="cover_letter",
+                content=cover_letter_text,
                 docx_path=docx_path,
+                prompt_name=prompt_name,
+                model=llm_model,
+                tokens_used=tokens_used,
             )
 
         match.status = "generated"
@@ -598,6 +629,7 @@ def _build_job_pipeline_from_llm(
 
     docs = get_application_documents(str(resume_id), db_job.id) if resume_id else {}
     req_docs = apply_details.get("required_docs", ["resume"])
+    missing_docs = [d for d in req_docs if not _doc_available(d, docs)]
 
     _cooldown_until = None
     if action == "email" and recip and not existing_app:
@@ -613,7 +645,7 @@ def _build_job_pipeline_from_llm(
                 if job_scraped and job_scraped <= cooldown_expired:
                     _cooldown_until = "expired_discard"
 
-    if action == "email" and recip and not existing_app and not _cooldown_until:
+    if action == "email" and recip and not existing_app and not _cooldown_until and proceed == "apply_now" and not missing_docs:
         subject = apply_details.get("subject") or f"Application: {job_data.get('title')}"
         body = apply_details.get("body") or ""
         merged_pdf_path = None
@@ -652,7 +684,12 @@ def _build_job_pipeline_from_llm(
             whatsapp_text += "\n\nNote: This job posting was scraped during a past cooldown period and has been discarded."
         send_whatsapp(text=f"{whatsapp_text}\n\n🆔 Job #{db_job.id}", score=match_data.get("score"))
 
-    new_status = "duplicate" if proceed == "skip_dedup" else ("waiting" if proceed != "apply_now" else "applied")
+    if proceed == "skip_dedup":
+        new_status = "duplicate"
+    elif proceed != "apply_now" or action in ("unknown", "external_url"):
+        new_status = "waiting"
+    else:
+        new_status = "applied"
     update_job_match_status(db_job.id, uid, new_status)
 
     return {
@@ -675,6 +712,10 @@ def _build_job_pipeline_from_llm(
 def process_whatsapp_text(
     text: str,
     user_id: str | None = None,
+    generate_model: str | None = None,
+    generate_provider: str | None = None,
+    generate_fallback_model: str | None = None,
+    generate_fallback_provider: str | None = None,
 ):
     """Process text received via WhatsApp — either a job posting or a data query."""
     run_logger = get_run_logger()
@@ -718,6 +759,10 @@ def process_whatsapp_text(
     try:
         result = generate_text_with_fallback(
             prompt_name="whatsapp_text_job_v1",
+            model=generate_model,
+            provider=generate_provider,
+            fallback_model=generate_fallback_model,
+            fallback_provider=generate_fallback_provider,
             user_profile=profile_json,
             job_text=text,
         )
@@ -737,7 +782,13 @@ def process_whatsapp_text(
         _send_error_whatsapp(uid, "Failed to understand the job posting. Please try again.")
         return {"status": "failed", "error": "json_parse"}
 
-    pipeline_result = _build_job_pipeline_from_llm(parsed, profile_data, uid, run_logger)
+    pipeline_result = _build_job_pipeline_from_llm(
+        parsed, profile_data, uid, run_logger,
+        llm_raw=raw,
+        llm_model=result.get("model"),
+        tokens_used=result.get("tokens_used", 0),
+        prompt_name="whatsapp_text_job_v1",
+    )
     if pipeline_result.get("status") in ("failed", "skipped"):
         err_msg = pipeline_result.get("error") or pipeline_result.get("reason", "unknown")
         if pipeline_result.get("status") == "failed":

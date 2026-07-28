@@ -26,9 +26,9 @@ from prefect_flows.relationship_flows import check_referrals_flow, daily_reminde
 
 _DEFAULTS = {
     "user_id": "ff0465b9-6512-4f47-8b5e-6f14a343a25d",
-    "match_model": "models/gemini-3.1-flash-lite",
+    "match_model": "models/gemini-3.5-flash-lite",
     "match_fallback_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "generate_model": "models/gemini-3.1-flash-lite",
+    "generate_model": "models/gemini-3.5-flash-lite",
     "generate_fallback_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
     "match_provider": "gemini",
     "match_fallback_provider": "openrouter",
@@ -119,6 +119,10 @@ def build():
             description="Process a job posting image received via WhatsApp webhook.",
             parameters={
                 "user_id": _DEFAULTS["user_id"],
+                "generate_model": _DEFAULTS["generate_model"],
+                "generate_provider": _DEFAULTS["generate_provider"],
+                "generate_fallback_model": _DEFAULTS["generate_fallback_model"],
+                "generate_fallback_provider": _DEFAULTS["generate_fallback_provider"],
             },
         ),
         # 5b. WhatsApp text job (triggered by webhook, no schedule)
@@ -128,6 +132,10 @@ def build():
             description="Process WhatsApp text: routes job postings and data queries, then executes.",
             parameters={
                 "user_id": _DEFAULTS["user_id"],
+                "generate_model": _DEFAULTS["generate_model"],
+                "generate_provider": _DEFAULTS["generate_provider"],
+                "generate_fallback_model": _DEFAULTS["generate_fallback_model"],
+                "generate_fallback_provider": _DEFAULTS["generate_fallback_provider"],
             },
         ),
         # 6. Referral checker — cross-reference matches with contacts

@@ -172,20 +172,42 @@ def build_yaml_dict(
     # ── Projects ────────────────────────────────────────────────────
     proj_overrides = overrides.get("project_highlights", {})
     proj_list = []
-    for proj in projects:
-        pname = proj.get("project_name", "")
-        highlights = proj_overrides.get(pname, proj.get("bullet_points", []))
-        purl = proj.get("project_url")
-        entry = {
-            "name": pname,
-            "location": None,
-            "start_date": _fmt_date(proj.get("start_date")),
-            "end_date": _fmt_date(proj.get("end_date")),
-            "highlights": highlights or None,
-        }
-        if purl:
-            entry["name"] = f"[{pname} (Click to view)]({purl})"
-        proj_list.append(entry)
+    if proj_overrides:
+        # LLM chose which projects to include — only include those it provided overrides for
+        proj_names = set(proj_overrides.keys())
+        for proj in projects:
+            pname = proj.get("project_name", "")
+            if pname not in proj_names:
+                continue
+            highlights = proj_overrides.get(pname, [])
+            purl = proj.get("project_url")
+            entry = {
+                "name": pname,
+                "location": None,
+                "start_date": _fmt_date(proj.get("start_date")),
+                "end_date": _fmt_date(proj.get("end_date")),
+                "highlights": highlights or None,
+            }
+            if purl:
+                entry["name"] = f"[{pname} (Click to view)]({purl})"
+            proj_list.append(entry)
+    else:
+        # No LLM override — include up to 2 most recent projects by ID
+        sorted_projects = sorted(projects, key=lambda p: p.get("id", 0) or 0, reverse=True)
+        for proj in sorted_projects[:2]:
+            pname = proj.get("project_name", "")
+            highlights = proj.get("bullet_points", [])
+            purl = proj.get("project_url")
+            entry = {
+                "name": pname,
+                "location": None,
+                "start_date": _fmt_date(proj.get("start_date")),
+                "end_date": _fmt_date(proj.get("end_date")),
+                "highlights": highlights or None,
+            }
+            if purl:
+                entry["name"] = f"[{pname} (Click to view)]({purl})"
+            proj_list.append(entry)
     if proj_list:
         sections["projects"] = proj_list
 

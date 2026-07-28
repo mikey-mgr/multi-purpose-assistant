@@ -123,6 +123,8 @@ def generate_text(
     if not response.choices:
         raise RuntimeError(f"LLM response for '{prompt_name}' has null/empty choices — provider-side issue")
     result = response.choices[0].message.content
+    if result:
+        result = result.replace(" \u2014 ", "; ").replace("\u2014", "; ")
     logger.info(
         "LLM response for '%s': %d chars, %d tokens",
         prompt_name, len(result or ""),
