@@ -1,6 +1,7 @@
 """
 LLM interaction layer.
-Routes through OpenRouter (OpenAI-compatible) or Gemini.
+Routes through the local LiteRT-LM GPU server (primary) or Gemini (fallback).
+Both are OpenAI-compatible.
 """
 
 import logging
@@ -14,38 +15,45 @@ logger = logging.getLogger(__name__)
 _MOCK_PREFIX = "[MOCK]"
 
 _PROVIDER_CONFIG = {
-    "openrouter": {
-        "base_url": "https://openrouter.ai/api/v1",
-        "key_attr": "OPENROUTER_API_KEY",
-    },
     "gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "key_attr": "GEMINI_API_KEY",
     },
     "local": {
-        "base_url": "http://127.0.0.1:7080/v1",
-        "api_key": "sk-local",
+        "base_url": settings.LITERT_API_URL,
+        "key_attr": "LITERT_API_KEY",
     },
 }
+
+
+def _resolve_provider(provider: str | None = None) -> str:
+    """
+    Normalize a provider string to a known provider.
+
+    Falls back to ``settings.LLM_PROVIDER`` when not specified, and maps
+    any unknown provider (e.g. legacy "openrouter") to ``"gemini"``.
+    """
+    provider = provider or settings.LLM_PROVIDER
+    if provider not in _PROVIDER_CONFIG:
+        logger.warning("Unknown provider '%s', defaulting to gemini", provider)
+        provider = "gemini"
+    return provider
 
 
 def _get_client(provider: str | None = None):
     """
     Return an OpenAI-compatible client for the given provider.
 
-    Provider values: ``"openrouter"``, ``"gemini"``, ``"local"``.
+    Provider values: ``"gemini"`` or ``"local"``.
     Falls back to ``settings.LLM_PROVIDER`` if not specified.
     Returns ``None`` if the provider's API key is not set.
     """
     from openai import OpenAI
 
-    provider = provider or settings.LLM_PROVIDER
-    cfg = _PROVIDER_CONFIG.get(provider)
-    if not cfg:
-        logger.warning("Unknown provider '%s', defaulting to openrouter", provider)
-        cfg = _PROVIDER_CONFIG["openrouter"]
+    provider = _resolve_provider(provider)
+    cfg = _PROVIDER_CONFIG[provider]
 
-    # Some providers (e.g. "local") supply a hardcoded API key in the config
+    # Some providers supply a hardcoded API key in the config
     api_key = cfg.get("api_key") or getattr(settings, cfg.get("key_attr", ""), None)
     if not api_key:
         logger.warning(
@@ -74,7 +82,7 @@ def generate_text(
     model : str | None
         Overrides the prompt's default model and ``settings.LLM_MODEL``.
     provider : str | None
-        ``"openrouter"`` or ``"gemini"``.  Falls back to ``settings.LLM_PROVIDER``.
+        ``"gemini"`` or ``"local"``.  Falls back to ``settings.LLM_PROVIDER``.
 
     Returns
     -------
@@ -85,8 +93,8 @@ def generate_text(
         **variables,
     )
 
-    resolved_provider = provider or settings.LLM_PROVIDER
-    client = _get_client(provider)
+    resolved_provider = _resolve_provider(provider)
+    client = _get_client(resolved_provider)
     if not client:
         logger.warning("No LLM API key set for provider '%s' — returning mock.", resolved_provider)
         return {
@@ -193,14 +201,14 @@ def generate_text_direct(
     model : str | None
         Overrides ``settings.LLM_MODEL``.
     provider : str | None
-        ``"openrouter"`` or ``"gemini"``.  Falls back to ``settings.LLM_PROVIDER``.
+        ``"gemini"`` or ``"local"``.  Falls back to ``settings.LLM_PROVIDER``.
 
     Returns
     -------
     dict with ``content``, ``model``, ``tokens_used``.
     """
-    resolved_provider = provider or settings.LLM_PROVIDER
-    client = _get_client(provider)
+    resolved_provider = _resolve_provider(provider)
+    client = _get_client(resolved_provider)
     if not client:
         logger.warning("No LLM API key set for provider '%s' — returning mock.", resolved_provider)
         return {"content": "[MOCK] generate_text_direct output", "model": "mock", "tokens_used": 0}
@@ -301,7 +309,8 @@ def generate_text_multimodal(
     Call a multimodal-capable LLM (Gemini) with text + image.
 
     Constructs an OpenAI-compatible multimodal message array and sends
-    via the Gemini endpoint. Only works with Gemini (not OpenRouter).
+    via the Gemini endpoint. The local GPU server also supports vision
+    via the same schema.
 
     Parameters
     ----------
@@ -314,9 +323,9 @@ def generate_text_multimodal(
     mimetype : str
         Image MIME type (e.g. ``image/jpeg``, ``image/png``).
     model : str | None
-        Overrides ``settings.LLM_MODEL`` (must be a Gemini vision model).
+        Overrides ``settings.LLM_MODEL`` (must be a vision-capable model).
     provider : str | None
-        Must be ``"gemini"`` or ``None`` (defaults to settings.LLM_PROVIDER).
+        Must be ``"gemini"``, ``"local"``, or ``None`` (defaults to settings.LLM_PROVIDER).
     max_tokens : int
         Max output tokens (default 12000).
     temperature : float
@@ -326,7 +335,7 @@ def generate_text_multimodal(
     -------
     dict with ``content``, ``model``, ``tokens_used``.
     """
-    resolved_provider = provider or settings.LLM_PROVIDER
+    resolved_provider = _resolve_provider(provider)
     client = _get_client(resolved_provider)
     if not client:
         logger.warning("No API key for '%s' — returning mock.", resolved_provider)
@@ -360,6 +369,8 @@ def generate_text_multimodal(
     )
 
     result = response.choices[0].message.content
+    if result:
+        result = result.replace(" \u2014 ", "; ").replace("\u2014", "; ")
     logger.info("Multimodal response: %d chars, %d tokens",
                 len(result or ""),
                 response.usage.total_tokens if response.usage else 0)
@@ -368,3 +379,59 @@ def generate_text_multimodal(
         "model": response.model,
         "tokens_used": response.usage.total_tokens if response.usage else 0,
     }
+
+
+def generate_text_multimodal_with_fallback(
+    system_prompt: str,
+    user_text: str,
+    image_base64: str,
+    mimetype: str = "image/jpeg",
+    model: str | None = None,
+    provider: str | None = None,
+    fallback_model: str | None = None,
+    fallback_provider: str | None = None,
+    max_tokens: int = 12000,
+    temperature: float = 0.7,
+    max_attempts: int = 3,
+) -> dict[str, Any]:
+    """
+    Call a multimodal LLM (local GPU primary, Gemini fallback) with text + image.
+
+    Attempt 1 uses model/provider; subsequent attempts use the fallback pair.
+    """
+    last_error = None
+    for attempt in range(max_attempts):
+        try:
+            if attempt % 2 == 0:
+                m, p = model, provider
+                tag = "primary"
+            else:
+                m, p = fallback_model, fallback_provider
+                tag = f"fallback (attempt {attempt + 1})"
+
+            logger.info(
+                "multimodal attempt %d/%d [%s]: model=%s provider=%s",
+                attempt + 1, max_attempts, tag, m, p,
+            )
+
+            result = generate_text_multimodal(
+                system_prompt=system_prompt,
+                user_text=user_text,
+                image_base64=image_base64,
+                mimetype=mimetype,
+                model=m,
+                provider=p,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            content = result.get("content", "")
+            if content and not content.startswith(_MOCK_PREFIX):
+                return result
+
+            last_error = Exception(f"Empty or mock multimodal content on attempt {attempt + 1}")
+
+        except Exception as e:
+            last_error = e
+            logger.warning("Multimodal attempt %d/%d failed: %s", attempt + 1, max_attempts, e)
+
+    raise last_error or RuntimeError("All multimodal fallback attempts failed")

@@ -97,7 +97,7 @@ def _cli():
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_set = sub.add_parser("set", help="Store a secret")
-    p_set.add_argument("key", help="Secret name (e.g. OPENROUTER_API_KEY)")
+    p_set.add_argument("key", help="Secret name (e.g. GEMINI_API_KEY)")
     p_set.add_argument("value", nargs="?", help="Secret value (prompts if omitted)")
 
     p_get = sub.add_parser("get", help="Read a secret")

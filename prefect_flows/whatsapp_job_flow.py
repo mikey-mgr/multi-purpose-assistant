@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from prefect import flow, get_run_logger
 
 from app.config import settings
-from app.llm import generate_text, generate_text_with_fallback, generate_text_multimodal
+from app.llm import generate_text, generate_text_with_fallback, generate_text_multimodal_with_fallback
 from app.orchestrator import _render_pdf_with_retry, _doc_available
 from app.document_generator import ensure_output_dir, cover_letter_to_docx
 from app.utils import unique_path
@@ -83,16 +83,18 @@ def process_whatsapp_job(
 
     system_prompt, _, _ = build_prompt(_WHATSAPP_PROMPT)
 
-    # 3. Call Gemini multimodal with image + profile
+    # 3. Call multimodal LLM with image + profile (local GPU primary, Gemini fallback)
     run_logger.info("Calling multimodal LLM with image (%s)...", mimetype)
     try:
-        result = generate_text_multimodal(
+        result = generate_text_multimodal_with_fallback(
             system_prompt=system_prompt,
             user_text=f"USER PROFILE:\n{profile_json}",
             image_base64=image_base64,
             mimetype=mimetype,
-            model=generate_model,
-            provider=generate_provider,
+            model=generate_model or "gemma-4-e2b-it",
+            provider="local",
+            fallback_model=generate_fallback_model or "models/gemini-3.5-flash-lite",
+            fallback_provider="gemini",
             max_tokens=12000,
             temperature=0.7,
         )
@@ -733,6 +735,10 @@ def process_whatsapp_text(
             formatted = _format_matches_for_llm(matches)
             result = generate_text_with_fallback(
                 prompt_name="whatsapp_data_query_v1",
+                model="gemma-4-e2b-it",
+                provider="local",
+                fallback_model="models/gemini-3.5-flash-lite",
+                fallback_provider="gemini",
                 user_question=text,
                 query_results=formatted,
             )

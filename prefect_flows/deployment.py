@@ -27,13 +27,13 @@ from prefect_flows.relationship_flows import check_referrals_flow, daily_reminde
 _DEFAULTS = {
     "user_id": "ff0465b9-6512-4f47-8b5e-6f14a343a25d",
     "match_model": "models/gemini-3.5-flash-lite",
-    "match_fallback_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "generate_model": "models/gemini-3.5-flash-lite",
-    "generate_fallback_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "match_fallback_model": "gemma-4-e2b-it",
+    "generate_model": "gemma-4-e2b-it",
+    "generate_fallback_model": "models/gemini-3.5-flash-lite",
     "match_provider": "gemini",
-    "match_fallback_provider": "openrouter",
-    "generate_provider": "gemini",
-    "generate_fallback_provider": "openrouter",
+    "match_fallback_provider": "local",
+    "generate_provider": "local",
+    "generate_fallback_provider": "gemini",
     "match_limit": 15,  # 02-matcher limit
     "job_limit": 5,    # 03-generator limit
     "scrape_site_names": None,  # None = all sites

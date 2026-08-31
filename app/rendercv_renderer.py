@@ -46,6 +46,31 @@ def slugify(name: str) -> str:
     return re.sub(r'[^a-z0-9_]', '', name.lower().replace(' ', '_'))
 
 
+def _coerce_strings(items: Any) -> list[str]:
+    """Coerce a bullet-points value into a list of strings.
+
+    rendercv requires every highlight to be a string. LLM output (or DB data)
+    may embed dicts/lists (e.g. nested bullet groups); those are flattened.
+    """
+    if items is None:
+        return []
+    if isinstance(items, str):
+        return [items]
+    if not isinstance(items, list):
+        return [str(items)]
+    out: list[str] = []
+    for item in items:
+        if item is None:
+            continue
+        if isinstance(item, str):
+            out.append(item)
+        elif isinstance(item, (dict, list)):
+            out.extend(_coerce_strings(item))
+        else:
+            out.append(str(item))
+    return out
+
+
 def _fmt_date(d: str | None) -> str | None:
     if not d:
         return None
@@ -130,7 +155,7 @@ def build_yaml_dict(
             "location": exp.get("location"),
             "start_date": _fmt_date(exp.get("start_date")),
             "end_date": _fmt_date(exp.get("end_date")),
-            "highlights": highlights,
+            "highlights": _coerce_strings(highlights),
         })
     if exp_list:
         sections["experience"] = exp_list
@@ -186,7 +211,7 @@ def build_yaml_dict(
                 "location": None,
                 "start_date": _fmt_date(proj.get("start_date")),
                 "end_date": _fmt_date(proj.get("end_date")),
-                "highlights": highlights or None,
+                "highlights": _coerce_strings(highlights) or None,
             }
             if purl:
                 entry["name"] = f"[{pname} (Click to view)]({purl})"
@@ -203,7 +228,7 @@ def build_yaml_dict(
                 "location": None,
                 "start_date": _fmt_date(proj.get("start_date")),
                 "end_date": _fmt_date(proj.get("end_date")),
-                "highlights": highlights or None,
+                "highlights": _coerce_strings(highlights) or None,
             }
             if purl:
                 entry["name"] = f"[{pname} (Click to view)]({purl})"
@@ -266,7 +291,9 @@ def _sanitize_dict(obj: Any) -> Any:
         return {k: _sanitize_dict(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_sanitize_dict(v) for v in obj]
-    return obj
+    if obj is None:
+        return None
+    return str(obj)
 
 
 def write_yaml(cv_dict: dict, output_path: str) -> str:

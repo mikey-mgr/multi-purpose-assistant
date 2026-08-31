@@ -8,7 +8,7 @@ import json
 import logging
 import uuid
 
-from app.llm import generate_text
+from app.llm import generate_text_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +93,12 @@ def batch_compose_whatsapp(
     logger.info("Composing WhatsApp batch notification for %d jobs.", len(entries))
     logger.debug("Batch WhatsApp raw input:\n%s", batch_input_json)
 
-    result = generate_text(
+    result = generate_text_with_fallback(
         "whatsapp_notify_batch_v1",
         model=model,
         provider=provider,
+        fallback_model="models/gemini-3.5-flash-lite",
+        fallback_provider="gemini",
         batch_input=batch_input_json,
     )
     content = result.get("content", "").strip()

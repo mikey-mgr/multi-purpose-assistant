@@ -68,7 +68,7 @@ def assemble_user_profile(user_id: UUID, resume_id: UUID | None = None) -> UserP
         documents = {d.doc_type: d.label or d.doc_type for d in user_docs}
         edu_docs = [e for e in education if e.document_path]
         if edu_docs:
-            labels = [f"{e.degree_type or 'Qualification'} in {e.field_of_study or 'N/A'}" for e in edu_docs]
+            labels = [f"{e.degree_type or 'Qualification'} in {e.field_of_study or 'N/A'} (academic certificate & transcript)" for e in edu_docs]
             documents["education_cert"] = "; ".join(labels)
         cert_docs = [c for c in certifications if c.document_path]
         if cert_docs:

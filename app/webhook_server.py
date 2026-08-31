@@ -222,16 +222,31 @@ async def health():
 # ── Background runners ─────────────────────────────────────────────────
 
 def _run_image_flow(image_base64: str, mimetype: str):
+    from prefect_flows.deployment import _DEFAULTS
     from prefect_flows.whatsapp_job_flow import process_whatsapp_job
 
-    process_whatsapp_job(image_base64=image_base64, mimetype=mimetype)
+    process_whatsapp_job(
+        image_base64=image_base64,
+        mimetype=mimetype,
+        generate_model=_DEFAULTS["generate_model"],
+        generate_provider=_DEFAULTS["generate_provider"],
+        generate_fallback_model=_DEFAULTS["generate_fallback_model"],
+        generate_fallback_provider=_DEFAULTS["generate_fallback_provider"],
+    )
     logger.info("Image flow completed.")
 
 
 def _run_text_flow(text: str):
+    from prefect_flows.deployment import _DEFAULTS
     from prefect_flows.whatsapp_job_flow import process_whatsapp_text
 
-    process_whatsapp_text(text=text)
+    process_whatsapp_text(
+        text=text,
+        generate_model=_DEFAULTS["generate_model"],
+        generate_provider=_DEFAULTS["generate_provider"],
+        generate_fallback_model=_DEFAULTS["generate_fallback_model"],
+        generate_fallback_provider=_DEFAULTS["generate_fallback_provider"],
+    )
     logger.info("Text flow completed.")
 
 
@@ -246,4 +261,20 @@ if __name__ == "__main__":
     logging.getLogger("prefect").setLevel(logging.WARNING)
     logging.getLogger("app.llm").setLevel(logging.WARNING)
     port = int(os.getenv("WEBHOOK_PORT", "8055"))
+
+    # ╔═══════════════════════════════════════════════════════════════════════════════╗
+    # ║  ⚠️  WARNING — HOOK HOST BINDING — READ BEFORE CHANGING  ⚠️                    ║
+    # ║                                                                               ║
+    # ║  The committed/known-good value is  host="::"  (everything IPv4+IPv6).         ║
+    # ║  The Evolution API delivers to "http://localhost:8055/..." — it must be        ║
+    # ║  reachable over BOTH v4 (127.0.0.1) and v6 ([::1]). The Evolution API sends    ║
+    # ║  over the address family the OS resolves "localhost" to; changing the bind     ║
+    # ║  to IPv6-only or IPv4-only can silently drop ALL inbound WhatsApp messages     ║
+    # ║  (nothing received, no replies sent). This bug was hit on 2026-08-12.          ║
+    # ║                                                                               ║
+    # ║  If you change host and inbound stops working, VERIFY with BOTH:               ║
+    # ║     curl http://127.0.0.1:8055/api/webhooks/evolution ...                      ║
+    # ║     curl http://[::1]:8055/health ...                                          ║
+    # ║  and never assume one family. Prefer "::" (dual-stack) on this machine.        ║
+    # ╚═══════════════════════════════════════════════════════════════════════════════╝
     uvicorn.run("app.webhook_server:app", host="::", port=port, reload=False)

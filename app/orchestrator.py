@@ -49,10 +49,10 @@ def process_job_for_user(
     user_id: str,
     job_id: int | None = None,
     resume_id: str | None = None,
-    model: str | None = None,
-    provider: str | None = None,
-    fallback_model: str | None = None,
-    fallback_provider: str | None = None,
+    model: str = "gemma-4-e2b-it",
+    provider: str = "local",
+    fallback_model: str = "models/gemini-3.5-flash-lite",
+    fallback_provider: str = "gemini",
 ) -> list[GDocSchema]:
     """
     Full pipeline for one user + one job.
@@ -365,8 +365,10 @@ def _load_job_description(job_id: int | None, profile) -> str:
 def batch_process_applications(
     user_id: str,
     limit: int = 10,
-    model: str | None = None,
-    provider: str | None = None,
+    model: str = "gemma-4-e2b-it",
+    provider: str = "local",
+    fallback_model: str = "models/gemini-3.5-flash-lite",
+    fallback_provider: str = "gemini",
 ) -> list[dict]:
     """
     Batch-apply for all generated-but-unapplied jobs using stored apply_details.
@@ -583,9 +585,11 @@ def _doc_available(doc_type: str, docs: dict) -> bool:
         return bool(docs.get("resume_pdf"))
     if doc_type == "cover_letter":
         return bool(docs.get("cover_letter_docx"))
-    if doc_type == "education_cert":
+    # Any academic document (transcript, degree/diploma certificate, academic
+    # certificate) is the SAME single document — the user's education_cert.
+    if doc_type in ("education_cert", "transcript", "academic_transcript", "academic_certificate", "degree_certificate"):
         return bool(docs.get("education_docs"))
-    if doc_type == "certification_cert":
+    if doc_type in ("certification_cert", "certificate", "professional_certificate"):
         return bool(docs.get("certification_docs"))
     # Misc doc types (id_doc, drivers_license, proof_of_age, etc.) — check by key
     return doc_type in docs.get("misc_docs", {})
@@ -609,9 +613,9 @@ def _build_attachment_list(
         paths.append(docs["resume_pdf"])
     if "cover_letter" in required_docs and docs.get("cover_letter_docx"):
         paths.append(docs["cover_letter_docx"])
-    if "education_cert" in required_docs:
+    if "education_cert" in required_docs or "transcript" in required_docs or "academic_transcript" in required_docs or "academic_certificate" in required_docs or "degree_certificate" in required_docs:
         paths.extend(docs.get("education_docs", []))
-    if "certification_cert" in required_docs:
+    if "certification_cert" in required_docs or "certificate" in required_docs or "professional_certificate" in required_docs:
         paths.extend(docs.get("certification_docs", []))
     # Misc doc types — map from required_docs values (e.g. "id_doc") to file paths
     misc = docs.get("misc_docs", {})

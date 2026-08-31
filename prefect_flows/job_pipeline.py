@@ -77,8 +77,8 @@ def match_pending_jobs(
     limit: int = 50,
     match_model: str = "models/gemini-3.5-flash-lite",
     match_provider: str = "gemini",
-    match_fallback_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free",
-    match_fallback_provider: str = "openrouter",
+    match_fallback_model: str = "gemma-4-e2b-it",
+    match_fallback_provider: str = "local",
 ) -> int:
     """Batch-classify unscored jobs and persist decisions."""
     decisions = batch_match_jobs(
@@ -98,10 +98,10 @@ def fetch_matched_jobs(user_id: str, limit: int = 10) -> list:
 def generate_application(
     job_id: int,
     user_id: str,
-    generate_model: str | None = None,
-    generate_provider: str | None = None,
-    generate_fallback_model: str | None = None,
-    generate_fallback_provider: str | None = None,
+    generate_model: str = "gemma-4-e2b-it",
+    generate_provider: str = "local",
+    generate_fallback_model: str = "models/gemini-3.5-flash-lite",
+    generate_fallback_provider: str = "gemini",
 ) -> dict:
     """Run the full generation pipeline for one matched job + user."""
     docs = process_job_for_user(
@@ -255,8 +255,8 @@ def match_jobs_flow(
     limit: int = 50,
     match_model: str = "models/gemini-3.5-flash-lite",
     match_provider: str = "gemini",
-    match_fallback_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free",
-    match_fallback_provider: str = "openrouter",
+    match_fallback_model: str = "gemma-4-e2b-it",
+    match_fallback_provider: str = "local",
     chain_next: bool = False,
     max_iterations: int = 3,
 ) -> int:
@@ -282,10 +282,10 @@ def match_jobs_flow(
             generate_matched_flow(
                 user_id=user_id,
                 limit=limit,
-                generate_model=None,
-                generate_provider=None,
-                generate_fallback_model=None,
-                generate_fallback_provider=None,
+                generate_model="gemma-4-e2b-it",
+                generate_provider="local",
+                generate_fallback_model="models/gemini-3.5-flash-lite",
+                generate_fallback_provider="gemini",
                 chain_next=True,
                 max_iterations=max_iterations,
             )
@@ -307,10 +307,10 @@ def match_jobs_flow(
 def generate_matched_flow(
     user_id: str,
     limit: int = 10,
-    generate_model: str | None = None,
-    generate_provider: str | None = None,
-    generate_fallback_model: str | None = None,
-    generate_fallback_provider: str | None = None,
+    generate_model: str = "gemma-4-e2b-it",
+    generate_provider: str = "local",
+    generate_fallback_model: str = "models/gemini-3.5-flash-lite",
+    generate_fallback_provider: str = "gemini",
     chain_next: bool = False,
     max_iterations: int = 3,
 ):
@@ -354,6 +354,8 @@ def generate_matched_flow(
                 limit=limit,
                 generate_model=generate_model,
                 generate_provider=generate_provider,
+                generate_fallback_model=generate_fallback_model,
+                generate_fallback_provider=generate_fallback_provider,
                 max_iterations=max_iterations,
             )
     except Exception as e:
@@ -372,8 +374,10 @@ def generate_matched_flow(
 def apply_agent_flow(
     user_id: str,
     limit: int = 10,
-    generate_model: str | None = None,
-    generate_provider: str | None = None,
+    generate_model: str = "gemma-4-e2b-it",
+    generate_provider: str = "local",
+    generate_fallback_model: str = "models/gemini-3.5-flash-lite",
+    generate_fallback_provider: str = "gemini",
     chain_next: bool = False,
     max_iterations: int = 3,
 ):
@@ -395,6 +399,8 @@ def apply_agent_flow(
                 limit=limit,
                 model=generate_model,
                 provider=generate_provider,
+                fallback_model=generate_fallback_model,
+                fallback_provider=generate_fallback_provider,
             )
             total_processed += len(results)
             for r in results:
@@ -417,8 +423,10 @@ def apply_agent_flow(
 def manual_generate(
     user_id: str,
     job_id: int,
-    generate_model: str | None = None,
-    generate_provider: str | None = None,
+    generate_model: str = "gemma-4-e2b-it",
+    generate_provider: str = "local",
+    generate_fallback_model: str = "models/gemini-3.5-flash-lite",
+    generate_fallback_provider: str = "gemini",
 ):
     """Trigger document generation for one specific job posting."""
     result = generate_application(
@@ -426,6 +434,8 @@ def manual_generate(
         user_id=user_id,
         generate_model=generate_model,
         generate_provider=generate_provider,
+        generate_fallback_model=generate_fallback_model,
+        generate_fallback_provider=generate_fallback_provider,
     )
     mark_processed(result)
     return result

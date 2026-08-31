@@ -64,22 +64,23 @@ Empty env vars are skipped (existing blocks keep their value).
 
 Block names used:
 - `app-config-db-conn-uri`
-- `app-config-openrouter-api-key`
 - `app-config-gemini-api-key`
-- `app-config-llm-provider`      — "openrouter" or "gemini"
-- `app-config-llm-model`         — default model for generation (e.g. "openai/gpt-4o")
+- `app-config-litert-api-key`
+- `app-config-llm-provider`      — "gemini" or "local"
+- `app-config-llm-model`         — default model for generation (e.g. "models/gemini-3.5-flash-lite")
 - `app-config-serpapi-api-key`
 - `app-config-gmail-address`
 - `app-config-gmail-app-password`
 
 ## Provider architecture (`app/llm.py`)
 
-The pipeline has **two inference providers**, each with their own API key + base URL:
+The pipeline has **two inference providers**, each with their own API key + base URL.
+Gemini is the primary provider; the local LiteRT-LM GPU server is the automatic fallback:
 
 | Provider | Setting | API base URL |
 |----------|---------|--------------|
-| `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
 | `gemini` | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai/` |
+| `local` | `LITERT_API_KEY` | `http://192.168.100.11:8055/v1` |
 
 Both are called through the **OpenAI Python SDK** (same `client.chat.completions.create` interface) — only the `base_url` and `api_key` differ. This is handled in `_get_client(provider)`.
 
@@ -102,10 +103,14 @@ Visit http://localhost:4200/deployments after starting `deployment.py`:
 ```json
 {
   "user_id": "ff0465b9-...",
-  "match_model": "nvidia/nemotron-3-ultra-550b-a55b:free",
-  "generate_model": "models/gemini-3.5-flash-lite",
-  "match_provider": "openrouter",
-  "generate_provider": "gemini",
+  "match_model": "models/gemini-3.5-flash-lite",
+  "generate_model": "gemma-4-e2b-it",
+  "match_provider": "gemini",
+  "generate_provider": "local",
+  "match_fallback_model": "gemma-4-e2b-it",
+  "match_fallback_provider": "local",
+  "generate_fallback_model": "models/gemini-3.5-flash-lite",
+  "generate_fallback_provider": "gemini",
   "match_limit": 50,
   "job_limit": 10
 }
@@ -118,7 +123,7 @@ Override any of these per run via the Prefect UI or CLI.
 | Parameter | Applies to | Meaning |
 |-----------|-----------|---------|
 | `match_model` | matcher | LLM model for batch classification (should be cheap) |
-| `match_provider` | matcher | `"openrouter"` or `"gemini"` — which API to route through |
+| `match_provider` | matcher | `"gemini"` or `"local"` — which API to route through |
 | `generate_model` | generator, apply agent | LLM model for resume + cover letter + apply parsing |
 | `generate_provider` | generator, apply agent | API route for generation and apply parsing |
 | `match_limit` | matcher | Max **unscored** jobs to evaluate this run |
@@ -180,8 +185,8 @@ from app.matcher import batch_match_jobs
 decisions = batch_match_jobs(
     user_id='ff0465b9-...',
     limit=5,
-    model='nvidia/nemotron-3-ultra-550b-a55b:free',
-    provider='openrouter',
+    model='models/gemini-3.5-flash-lite',
+    provider='gemini',
 )
 print(f'Matched: {sum(1 for d in decisions if d[\"status\"]==\"matched\")}/{len(decisions)}')
 "
@@ -205,7 +210,7 @@ python -m scrapers.unified_scraper
 
 ```bash
 prefect deployment run 'pull-and-process-jobs/job-pipeline' \
-  -p '{"match_provider": "gemini", "match_model": "gemini-2.0-flash"}'
+  -p '{"match_provider": "gemini", "match_model": "models/gemini-3.5-flash-lite"}'
 ```
 
 ## Typst (PDF rendering)

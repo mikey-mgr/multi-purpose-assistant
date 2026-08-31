@@ -207,8 +207,8 @@ def batch_match_jobs(
     limit: int = 50,
     model: str = "models/gemini-3.5-flash-lite",
     provider: str = "gemini",
-    fallback_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free",
-    fallback_provider: str = "openrouter",
+    fallback_model: str = "gemma-4-e2b-it",
+    fallback_provider: str = "local",
 ) -> list[dict]:
     """
     Main entry point.

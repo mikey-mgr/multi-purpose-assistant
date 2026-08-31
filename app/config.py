@@ -23,12 +23,13 @@ class Settings:
         "postgresql://postgres:@localhost:5432/ai_assistant",
     )
 
-    # ── LLM Provider (OpenRouter or Gemini) ─────────────────────────
-    OPENROUTER_API_KEY: str | None = os.getenv("OPENROUTER_API_KEY")
+    # ── LLM Provider (LiteRT-LM local GPU primary, Gemini fallback) ──
     GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY")
+    LITERT_API_URL: str = os.getenv("LITERT_API_URL", "http://192.168.100.11:8055/v1")
+    LITERT_API_KEY: str | None = os.getenv("LITERT_API_KEY", "S20FEHomeServerTrojanAPIKey")
 
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openrouter")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "openai/gpt-4o")
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "local")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemma-4-e2b-it")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "1536"))
 
@@ -50,8 +51,8 @@ class Settings:
     # ── Key names in Prefect Secret blocks ─────────────────────────
     _SECRET_KEYS = {
         "DB_CONN_URI": "db-conn-uri",
-        "OPENROUTER_API_KEY": "openrouter-api-key",
         "GEMINI_API_KEY": "gemini-api-key",
+        "LITERT_API_KEY": "litert-api-key",
         "SERPAPI_API_KEY": "serpapi-api-key",
         "GMAIL_ADDRESS": "gmail-address",
         "GMAIL_APP_PASSWORD": "gmail-app-password",

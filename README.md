@@ -91,7 +91,7 @@ Secrets are resolved in this priority order:
 **Recommended — store in Windows Credential Manager:**
 ```powershell
 pip install keyring
-python -m app.secrets_store set OPENROUTER_API_KEY
+python -m app.secrets_store set GEMINI_API_KEY
 python -m app.secrets_store set DB_CONN_URI
 ```
 
@@ -100,12 +100,14 @@ Each command prompts for the value (hidden input). Stored in OS credential manag
 **Legacy — `.env` file** (only used if keyring has no value):
 ```
 DB_CONN_URI=postgresql://postgres:YOUR_PASSWORD@localhost:5432/ai_assistant
-LLM_PROVIDER=openrouter
+LLM_PROVIDER=gemini
 ```
 
 **Legacy — env vars** (highest priority, session-only):
 ```powershell
-$env:OPENROUTER_API_KEY="sk-or-..."
+$env:GEMINI_API_KEY="..."
+$env:LITERT_API_KEY="S20FEHomeServerTrojanAPIKey"
+$env:LITERT_API_URL="http://192.168.100.11:8055/v1"
 ```
 
 ### 3. Seed prompts
@@ -154,11 +156,11 @@ Option B — from terminal env vars (skip `.env`):
 ```powershell
 conda activate prefect_env
 prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api
-$env:OPENROUTER_API_KEY="sk-or-..."
 $env:GEMINI_API_KEY="..."
+$env:LITERT_API_KEY="S20FEHomeServerTrojanAPIKey"
 $env:DB_CONN_URI="postgresql://postgres:pass@localhost:5432/ai_assistant"
-$env:LLM_PROVIDER="openrouter"
-$env:LLM_MODEL="openai/gpt-4o"
+$env:LLM_PROVIDER="gemini"
+$env:LLM_MODEL="models/gemini-3.5-flash-lite"
 python -m prefect_flows.setup_blocks
 ```
 Set env vars for any other keys in the script (`SERPAPI_API_KEY`, `GMAIL_ADDRESS`, etc.) as needed. The script reads from the environment first; `.env` is only a fallback.
@@ -272,7 +274,7 @@ Keyed on `(recipient_email, user_id)`. Stored in `email_cooldowns` table.
 | Module | What it does |
 |--------|-------------|
 | `core.database` | ORM models, CRUD, pgvector hybrid search, prompt management, cooldown tracking |
-| `app.llm` | `generate_text()`, `generate_text_multimodal()`, `generate_embedding()` — routes through OpenRouter or Gemini |
+| `app.llm` | `generate_text()`, `generate_text_multimodal()`, `generate_embedding()` — routes through Gemini (primary) or local LiteRT-LM GPU server (fallback) |
 | `app.orchestrator` | `process_job_for_user()` — RAG → LLM → YAML → PDF → snapshot; `batch_process_applications()` — batch email + WhatsApp |
 | `app.rag` | Profile assembly + hybrid (keyword + semantic) job search + reference management |
 | `app.rendercv_renderer` | YAML dict → RenderCV PDF (Harvard theme) + server-side reference injection |
@@ -282,12 +284,13 @@ Keyed on `(recipient_email, user_id)`. Stored in `email_cooldowns` table.
 
 ## Provider Override
 
-Each stage targets an independent provider + model:
+Each stage targets a primary provider + model, with an automatic fallback:
 
 | Scenario | match_provider | match_model | generate_provider | generate_model |
 |----------|---------------|-------------|-------------------|----------------|
-| Default | *(→ LLM_PROVIDER)* | `nvidia/nemotron-3-ultra-550b-a55b:free` | *(→ LLM_PROVIDER)* | *(→ LLM_MODEL)* |
-| Match via Gemini, generate via GPT-4o | `gemini` | `gemini-2.0-flash` | `openrouter` | `openai/gpt-4o` |
+| Default (matching) | `gemini` | `models/gemini-3.5-flash-lite` | `gemini` | `models/gemini-3.5-flash-lite` |
+| Default (apply) | `gemini` | `models/gemini-3.5-flash-lite` | `local` | `gemma-4-e2b-it` |
+| GPU fallback (apply) | `local` | `gemma-4-e2b-it` | `gemini` | `models/gemini-3.5-flash-lite` |
 
 ## Source of Truth vs Generated Artifacts
 
