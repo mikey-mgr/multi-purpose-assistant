@@ -35,6 +35,7 @@ class Settings:
 
     # ── Services ────────────────────────────────────────────────────
     SERPAPI_API_KEY: str | None = os.getenv("SERPAPI_API_KEY")
+    TAVILY_API_KEY: str | None = os.getenv("TAVILY_API_KEY")
     EVOLUTION_API_URL: str = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
 
     # ── Email (Gmail SMTP) ──────────────────────────────────────────
@@ -54,6 +55,7 @@ class Settings:
         "GEMINI_API_KEY": "gemini-api-key",
         "LITERT_API_KEY": "litert-api-key",
         "SERPAPI_API_KEY": "serpapi-api-key",
+        "TAVILY_API_KEY": "tavily-api-key",
         "GMAIL_ADDRESS": "gmail-address",
         "GMAIL_APP_PASSWORD": "gmail-app-password",
         "LLM_PROVIDER": "llm-provider",

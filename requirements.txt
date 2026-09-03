@@ -19,3 +19,4 @@ rendercv>=2.8
 
 fpdf2>=2.8.0
 pypdf>=5.0.0
+tavily-python>=0.5.0

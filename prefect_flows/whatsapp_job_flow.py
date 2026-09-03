@@ -47,6 +47,290 @@ _WHATSAPP_PROMPT = "whatsapp_image_job_v1"
 _DEFAULT_USER_ID = "ff0465b9-6512-4f47-8b5e-6f14a343a25d"
 
 
+def _resolve_prep_job_id(text: str, user_id: str, run_logger=None) -> int | None:
+    """Resolve job_id for interview prep from WhatsApp text.
+
+    Priority:
+      1. Explicit id: #43, job 43, prep 43, or bare number after prep
+      2. Direct DB lookup — verify job_id exists for this user (any age)
+      3. Company/title substring in extended pool (last 3 weeks)
+      4. Most recent matched job (fallback)
+    """
+    import re
+
+    log = run_logger or logger
+
+    # 1. Explicit ID — try all patterns, validate via DB before returning
+    candidates: list[int] = []
+    for pat in [r"#\s*(\d+)", r"\bjob\s+#?\s*(\d+)\b", r"\bprep\D*(\d+)\b", r"\bprepare\D*(\d+)\b"]:
+        m = re.search(pat, text.lower())
+        if m:
+            try:
+                candidates.append(int(m.group(1)))
+            except ValueError:
+                pass
+    # Also bare trailing number for "prep 43" style
+    if not candidates:
+        m = re.search(r"\b(\d{1,6})\b", text.strip())
+        # only treat bare number as job_id if text is short and contains prep
+        if m and any(k in text.lower() for k in ("prep", "prepare")):
+            try:
+                candidates.append(int(m.group(1)))
+            except ValueError:
+                pass
+
+    # Validate each candidate directly against DB (any age, not just recent 20)
+    for job_id in candidates:
+        try:
+            session = get_session()
+            try:
+                uid = __import__("uuid").UUID(user_id) if isinstance(user_id, str) else user_id
+                exists = session.query(JobMatch).filter(JobMatch.job_id == job_id, JobMatch.user_id == uid).first()
+                if exists:
+                    log.info("Prep job_id resolved via direct DB hit: %s", job_id)
+                    return job_id
+                # Also allow if ScrapedJob exists even without match (e.g. whatsapp job not yet matched)
+                job = session.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+                if job:
+                    log.info("Prep job_id resolved via ScrapedJob direct hit: %s", job_id)
+                    return job_id
+                log.warning("Prep candidate job_id %s not found for user — trying next", job_id)
+            finally:
+                session.close()
+        except Exception as e:
+            log.warning("DB check failed for candidate %s: %s", job_id, e)
+
+    # 2. Company/title substring — use extended pool (last 3 weeks, not just 20)
+    try:
+        recent = get_recent_matches(user_id, limit=50)
+        # If still not enough and user has older jobs, fallback to time-filtered query
+        if len(recent) < 50:
+            try:
+                from datetime import datetime, timedelta, timezone
+                from core.database import get_session as _gs
+                cutoff = datetime.now(timezone.utc) - timedelta(days=21)
+                session = _gs()
+                try:
+                    uid = __import__("uuid").UUID(user_id) if isinstance(user_id, str) else user_id
+                    rows = (
+                        session.query(
+                            ScrapedJob.id.label("job_id"),
+                            ScrapedJob.company,
+                            ScrapedJob.title,
+                        )
+                        .join(JobMatch, ScrapedJob.id == JobMatch.job_id)
+                        .filter(JobMatch.user_id == uid, JobMatch.status != "rejected", ScrapedJob.scraped_at >= cutoff)
+                        .order_by(ScrapedJob.id.desc())
+                        .limit(100)
+                        .all()
+                    )
+                    # Merge any not already in recent
+                    seen = {r.get("job_id") for r in recent}
+                    for row in rows:
+                        if row.job_id not in seen:
+                            recent.append({"job_id": row.job_id, "company": row.company, "title": row.title})
+                finally:
+                    session.close()
+            except Exception as e:
+                log.warning("Extended pool fetch failed: %s", e)
+
+        lower = text.lower()
+        for r in recent:
+            company = (r.get("company") or "").lower()
+            title = (r.get("title") or r.get("job_title") or "").lower()
+            if company and len(company) > 2 and company in lower:
+                jid = r.get("job_id") or r.get("id")
+                if jid:
+                    log.info("Prep job_id resolved via company match '%s' -> %s", company, jid)
+                    return int(jid)
+            if title and len(title) > 4 and title in lower:
+                jid = r.get("job_id") or r.get("id")
+                if jid:
+                    log.info("Prep job_id resolved via title match '%s' -> %s", title, jid)
+                    return int(jid)
+        # 3. Fallback to most recent
+        if recent:
+            jid = recent[0].get("job_id") or recent[0].get("id")
+            if jid:
+                log.info("Prep job_id fallback to most recent: %s", jid)
+                return int(jid)
+    except Exception as e:
+        log.warning("Failed to resolve prep job_id via recent matches: %s", e)
+
+    return None
+
+
+def _get_relevant_matches_for_query(user_id: str, query_text: str, run_logger=None, limit: int = 10) -> list[dict]:
+    """Hybrid semantic + keyword retrieval for data_query — avoids overloading prompt.
+
+    Tries embedding + search_jobs_hybrid filtered to user's matched jobs.
+    Falls back to get_recent_matches on any failure.
+    Keeps prompt lean: 8-10 most relevant rows instead of blind 20.
+    """
+    log = run_logger or logger
+    try:
+        from app.llm import generate_embedding
+        from core.database import search_jobs_hybrid
+
+        embedding = None
+        try:
+            embedding = generate_embedding(query_text)
+        except Exception as e:
+            log.warning("Embedding failed for data_query, falling back to keyword: %s", e)
+
+        # Greeting shortcut — no need for semantic search
+        if query_text.strip().lower() in ("hi", "hello", "hey", "hi there", "hello there"):
+            raise ValueError("greeting — use recent")
+
+        hybrid = search_jobs_hybrid(query_text=query_text, embedding_vector=embedding, top_k=20)
+        if not hybrid:
+            raise ValueError("hybrid returned no results")
+
+        # Intersect hybrid job ids with user's matches
+        hybrid_ids = [job.id for job, _ in hybrid]
+        session = get_session()
+        try:
+            uid = __import__("uuid").UUID(user_id) if isinstance(user_id, str) else user_id
+            rows = (
+                session.query(
+                    ScrapedJob.site,
+                    ScrapedJob.id.label("job_id"),
+                    ScrapedJob.company,
+                    ScrapedJob.title,
+                    __import__("sqlalchemy", fromlist=["func"]).func.left(ScrapedJob.description, 50).label("description"),
+                    JobMatch.status,
+                    JobMatch.score,
+                    JobMatch.reason,
+                    JobMatch.proceed,
+                    ScrapedJob.scraped_at,
+                    JobMatch.required_docs,
+                    JobMatch.apply_recipient,
+                    JobMatch.expiry_date,
+                    ScrapedJob.location,
+                    ScrapedJob.job_url,
+                    ScrapedJob.apply_instructions,
+                )
+                .join(JobMatch, ScrapedJob.id == JobMatch.job_id)
+                .filter(JobMatch.user_id == uid, JobMatch.status != "rejected", ScrapedJob.id.in_(hybrid_ids))
+                .all()
+            )
+            if rows:
+                columns = ["site","job_id","company","title","description","status","score","reason","proceed","scraped_at","required_docs","apply_recipient","expiry_date","location","job_url","apply_instructions"]
+                # Preserve hybrid ranking order
+                order = {jid: i for i, jid in enumerate(hybrid_ids)}
+                dicts = [dict(zip(columns, r)) for r in rows]
+                dicts.sort(key=lambda d: order.get(d["job_id"], 999))
+                log.info("Hybrid data_query: %d relevant matches (from %d hybrid)", len(dicts), len(hybrid))
+                return dicts[:limit]
+            raise ValueError("no intersection with user matches")
+        finally:
+            session.close()
+    except Exception as e:
+        log.info("Falling back to time-filtered matches for data_query: %s", e)
+        # Fallback: last 3 weeks (21 days) — not "all time", keeps prompt lean
+        try:
+            from datetime import datetime, timedelta, timezone
+            cutoff = datetime.now(timezone.utc) - timedelta(days=21)
+            session = get_session()
+            try:
+                uid = __import__("uuid").UUID(user_id) if isinstance(user_id, str) else user_id
+                rows = (
+                    session.query(
+                        ScrapedJob.site,
+                        ScrapedJob.id.label("job_id"),
+                        ScrapedJob.company,
+                        ScrapedJob.title,
+                        __import__("sqlalchemy", fromlist=["func"]).func.left(ScrapedJob.description, 50).label("description"),
+                        JobMatch.status,
+                        JobMatch.score,
+                        JobMatch.reason,
+                        JobMatch.proceed,
+                        ScrapedJob.scraped_at,
+                        JobMatch.required_docs,
+                        JobMatch.apply_recipient,
+                        JobMatch.expiry_date,
+                        ScrapedJob.location,
+                        ScrapedJob.job_url,
+                        ScrapedJob.apply_instructions,
+                    )
+                    .join(JobMatch, ScrapedJob.id == JobMatch.job_id)
+                    .filter(JobMatch.user_id == uid, JobMatch.status != "rejected", ScrapedJob.scraped_at >= cutoff)
+                    .order_by(ScrapedJob.id.desc())
+                    .limit(50)
+                    .all()
+                )
+                if rows:
+                    columns = ["site","job_id","company","title","description","status","score","reason","proceed","scraped_at","required_docs","apply_recipient","expiry_date","location","job_url","apply_instructions"]
+                    dicts = [dict(zip(columns, r)) for r in rows]
+                    log.info("Fallback to last 3 weeks: %d matches", len(dicts))
+                    return dicts[:limit]
+            finally:
+                session.close()
+        except Exception as fe:
+            log.warning("3-week fallback failed: %s", fe)
+        return get_recent_matches(user_id, limit=limit)
+
+
+def _classify_intent(text: str, run_logger=None) -> str:
+    """Classify WhatsApp text intent via LLM router with rule fallback.
+
+    Calls whatsapp_text_router_v1 (3 intents). On any failure or low confidence,
+    falls back to cheap rules: prep keywords -> interview_prep, ? -> data_query, else job_posting.
+    No user details are dumped to the router — only user_message.
+    """
+    log = run_logger or logger
+    # Try LLM router
+    try:
+        result = generate_text_with_fallback(
+            prompt_name="whatsapp_text_router_v1",
+            model="gemma-4-e2b-it",
+            provider="local",
+            fallback_model="models/gemini-3.5-flash-lite",
+            fallback_provider="gemini",
+            user_message=text,
+        )
+        raw = (result.get("content") or "").strip()
+        # Tolerant JSON parse (handle fences)
+        if "```" in raw:
+            try:
+                raw = raw.split("```")[1].split("```")[0].strip()
+                if raw.startswith("json"):
+                    raw = raw[4:].strip()
+            except Exception:
+                pass
+        parsed = json.loads(raw)
+        intent = (parsed.get("intent") or "").strip().lower()
+        conf = parsed.get("confidence", 0)
+        if intent in ("job_posting", "data_query", "interview_prep"):
+            log.info("LLM router classified intent=%s confidence=%s", intent, conf)
+            # Low-confidence interview_prep with no prep keywords -> fallback to rule
+            if intent == "interview_prep" and conf < 60:
+                lower = text.lower()
+                if not any(k in lower for k in ("prep", "prepare", "interview")):
+                    log.info("LLM low-confidence interview_prep (%s) without prep keywords — falling back to data_query/job_posting", conf)
+                else:
+                    return intent
+            else:
+                return intent
+        log.warning("LLM router returned unknown intent '%s' — falling back to rules", intent)
+    except Exception as e:
+        log.warning("LLM router failed (%s) — falling back to rules", e)
+
+    # Rule fallback (cheap, no LLM)
+    lower = text.strip().lower()
+    is_prep = any(k in lower for k in ("interview prep", "interview preparation", " prep ", " prep#", "prep #"))
+    if lower.startswith("prep") or lower.startswith("prepare"):
+        is_prep = True
+    if is_prep:
+        log.info("Rule fallback classified intent=interview_prep")
+        return "interview_prep"
+    if text.strip().endswith("?"):
+        log.info("Rule fallback classified intent=data_query")
+        return "data_query"
+    log.info("Rule fallback classified intent=job_posting")
+    return "job_posting"
+
+
 @flow(
     name="process-whatsapp-job",
     description="Parse a job posting image, match, generate docs, apply, and notify via WhatsApp.",
@@ -724,14 +1008,51 @@ def process_whatsapp_text(
     uid = user_id or _DEFAULT_USER_ID
     run_logger.info("Processing WhatsApp text for user %s ...", uid)
 
-    # 1. Route the intent — question mark = data query/greeting, else = job posting
-    intent = "data_query" if text.strip().endswith("?") else "job_posting"
-    run_logger.info("Classified intent: %s (rule: ends_with_question_mark)", intent)
+    # 1. Route the intent via LLM router (whatsapp_text_router_v1) with rule fallback
+    intent = _classify_intent(text, run_logger)
+    run_logger.info("Classified intent: %s", intent)
 
-    # 2. Handle data query / greeting
+    # 1b. Handle interview prep (on-demand, company-only MVP)
+    if intent == "interview_prep":
+        try:
+            job_id = _resolve_prep_job_id(text, uid, run_logger)
+            if not job_id:
+                _send_error_whatsapp(uid, "I couldn't find which job you mean. Try: prep #<job id>  e.g. prep #1818")
+                return {"status": "failed", "error": "no_job_id", "intent": "interview_prep"}
+            from app.interview_prep import generate_interview_prep
+            result = generate_interview_prep(
+                user_id=uid,
+                job_id=job_id,
+                model=generate_model or "gemma-4-e2b-it",
+                provider=generate_provider or "local",
+                fallback_model=generate_fallback_model or "models/gemini-3.5-flash-lite",
+                fallback_provider=generate_fallback_provider or "gemini",
+            )
+            whatsapp_text = result.get("whatsapp_text", "") or f"Prep ready for {result.get('company','')} — Job #{job_id}"
+            docx_path = result.get("docx_path")
+            # Send summary text
+            send_whatsapp(text=f"{whatsapp_text}\n\n🆔 Job #{job_id}")
+            # Send doc if available
+            if docx_path:
+                try:
+                    from app.whatsapp_notifier import send_whatsapp_document
+                    send_whatsapp_document(
+                        file_path=docx_path,
+                        caption=f"Interview Prep — {result.get('job_title','')} at {result.get('company','')} — Job #{job_id}",
+                    )
+                except Exception as e:
+                    run_logger.warning("Failed to send prep doc for job %s: %s", job_id, e)
+            run_logger.info("Interview prep completed for job %s", job_id)
+            return {"status": "completed", "intent": "interview_prep", "job_id": job_id, "doc_id": result.get("doc_id")}
+        except Exception as e:
+            run_logger.error("Interview prep failed: %s", e)
+            _send_error_whatsapp(uid, "Failed to generate interview prep. Please try again.")
+            return {"status": "failed", "error": str(e), "intent": "interview_prep"}
+
+    # 2. Handle data query / greeting (hybrid retrieval — lean prompt)
     if intent == "data_query":
         try:
-            matches = get_recent_matches(uid, limit=20)
+            matches = _get_relevant_matches_for_query(uid, text, run_logger, limit=10)
             formatted = _format_matches_for_llm(matches)
             result = generate_text_with_fallback(
                 prompt_name="whatsapp_data_query_v1",

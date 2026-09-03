@@ -30,12 +30,87 @@ def ensure_output_dir(subdir: str = "") -> str:
     return path
 
 
+def _add_inline_runs(para, text: str):
+    """Add WhatsApp markdown inline runs to an existing paragraph.
+
+    Supports: *bold*, _italic_, ~strikethrough~, ```code```.
+    """
+    import re
+    from docx.shared import Pt
+
+    pattern = re.compile(r"(\*[^*]+\*|_[^_]+_|~[^~]+~|```[^`]+```)")
+    parts = pattern.split(text)
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("*") and part.endswith("*") and len(part) > 2:
+            run = para.add_run(part[1:-1])
+            run.bold = True
+        elif part.startswith("_") and part.endswith("_") and len(part) > 2:
+            run = para.add_run(part[1:-1])
+            run.italic = True
+        elif part.startswith("~") and part.endswith("~") and len(part) > 2:
+            run = para.add_run(part[1:-1])
+            run.font.strike = True
+        elif part.startswith("```") and part.endswith("```") and len(part) > 6:
+            run = para.add_run(part[3:-3])
+            run.font.name = "Courier New"
+            run.font.size = Pt(9)
+        else:
+            para.add_run(part)
+
+
+def _add_formatted_paragraph(doc, text: str):
+    """Legacy helper — splits heading vs normal."""
+    import re
+
+    heading_match = re.match(r"^(#{1,3})\s+(.*)", text.strip())
+    if heading_match:
+        level = len(heading_match.group(1))
+        para = doc.add_heading(level=level)
+        _add_inline_runs(para, heading_match.group(2).strip())
+        return para
+    para = doc.add_paragraph()
+    _add_inline_runs(para, text)
+    return para
+
+
 def cover_letter_to_docx(text_content: str, output_path: str) -> str:
+    """Render markdown/WhatsApp-markdown to DOCX with proper headings and bullets."""
+    import re
+
     try:
         from docx import Document
         doc = Document()
-        for para in text_content.strip().split("\n\n"):
-            doc.add_paragraph(para.strip())
+        lines = text_content.strip().split("\n")
+        for raw_line in lines:
+            line = raw_line.rstrip()
+            if not line.strip():
+                continue
+            stripped = line.strip()
+            # Heading: # Title, ## Section, ### Question
+            m = re.match(r"^(#{1,3})\s+(.*)", stripped)
+            if m:
+                level = len(m.group(1))
+                para = doc.add_heading(level=level)
+                _add_inline_runs(para, m.group(2).strip())
+                continue
+            # Bullet: * , - , •  (including "* *Bold*:" style)
+            bm = re.match(r"^([•\-\*])\s+(.*)", stripped)
+            if bm:
+                content = bm.group(2)
+                para = doc.add_paragraph(style="List Bullet")
+                _add_inline_runs(para, content)
+                continue
+            # Numbered list: 1. , 2. etc (rare, but handle)
+            nm = re.match(r"^\d+\.\s+(.*)", stripped)
+            if nm:
+                para = doc.add_paragraph(style="List Number")
+                _add_inline_runs(para, nm.group(1))
+                continue
+            # Normal paragraph — may contain inline *bold* etc
+            para = doc.add_paragraph()
+            _add_inline_runs(para, stripped)
         doc.save(output_path)
         logger.info("DOCX written to %s", output_path)
     except ImportError:

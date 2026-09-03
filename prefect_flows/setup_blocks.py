@@ -21,6 +21,7 @@ SECRETS = [
     ("app-config-llm-provider", "LLM_PROVIDER", "Default LLM provider (gemini | local)"),
     ("app-config-llm-model", "LLM_MODEL", "Default LLM model for generation"),
     ("app-config-serpapi-api-key", "SERPAPI_API_KEY", "SerpAPI key"),
+    ("app-config-tavily-api-key", "TAVILY_API_KEY", "Tavily API key (fallback for company research)"),
     ("app-config-gmail-address", "GMAIL_ADDRESS", "Gmail sending address"),
     ("app-config-gmail-app-password", "GMAIL_APP_PASSWORD", "Gmail app password"),
     ("app-config-whatsapp-api-key", "WHATSAPP_API_KEY", "Whatsapp api key"),
