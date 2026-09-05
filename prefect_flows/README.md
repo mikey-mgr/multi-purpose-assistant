@@ -174,7 +174,7 @@ and extract structured data (recipient, subject, body, required document types).
 ```
 POST http://localhost:8080/message/sendText/Apex_Web_Services
 Header: apikey: whatsapp_api_key
-Body: {"number": "263788667111@s.whatsapp.net", "text": "..."}
+Body: {"number": "263712210204@s.whatsapp.net", "text": "..."}
 ```
 
 **Email** — uses Gmail SMTP (`smtp.gmail.com:587`) with credentials from

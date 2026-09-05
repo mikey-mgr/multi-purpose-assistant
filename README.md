@@ -254,16 +254,28 @@ prefect deployment run 05-whatsapp-image-job
 
 ## WhatsApp Webhook (replaces n8n)
 
-Start the FastAPI server:
+Start the Dockerized FastAPI webhook together with Prefect:
 ```bash
-python -m app.webhook_server          # port 8055
+docker compose --profile orchestration up -d webhook-server
 ```
 
-The server listens for webhooks from **Evolution API** at `http://localhost:8080`:
+Configure the inbound allowlist and an independent webhook secret in `.env`:
+
+```env
+WHATSAPP_ALLOWED_NUMBERS=263712210204
+WHATSAPP_WEBHOOK_SECRET=generate-a-long-random-secret
+WEBHOOK_PORT=8055
+# Set this to your HTTPS endpoint if Evolution runs on another host.
+EVOLUTION_WEBHOOK_URL=http://host.docker.internal:8055/api/webhooks/evolution
+```
+
+If `WHATSAPP_WEBHOOK_SECRET` is omitted, the server falls back to
+`WHATSAPP_API_KEY`. Evolution must send the resolved secret in the
+`x-webhook-secret` header. For this same-host Docker setup, Evolution posts to:
 
 ```http
-POST http://localhost:8055/api/webhooks/evolution
-apikey: your_whatsapp_api_key
+POST http://host.docker.internal:8055/api/webhooks/evolution
+x-webhook-secret: your_webhook_secret
 
 {
   "event": "messages.upsert",
@@ -275,11 +287,16 @@ apikey: your_whatsapp_api_key
 }
 ```
 
+The webhook service registers this URL and the `MESSAGES_UPSERT` event with
+Evolution on every startup. When Evolution and this project run on different
+hosts, expose the endpoint through HTTPS and set `EVOLUTION_WEBHOOK_URL` to
+that public URL before recreating `webhook-server`.
+
 ### Routing
 
 The server:
 1. Drops messages where `fromMe = true` or chat is not an individual (group/broadcast/status)
-2. Drops messages from phone numbers not in the allowed prefix list `[263788667111, 263773393934, 263771906135]`
+2. Drops messages from phone numbers not listed in `WHATSAPP_ALLOWED_NUMBERS`
 3. Routes based on message type:
    - **Image messages** → `process-whatsapp-job` (vision LLM call)
    - **Text messages** → rule-based intent router:

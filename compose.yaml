@@ -99,8 +99,9 @@ services:
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://host.docker.internal:8080}
       EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-Apex_Web_Services}
+      EVOLUTION_WEBHOOK_URL: ${EVOLUTION_WEBHOOK_URL:-http://host.docker.internal:8055/api/webhooks/evolution}
       WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-}
-      WHATSAPP_NUMBER: ${WHATSAPP_NUMBER:-263788667111@s.whatsapp.net}
+      WHATSAPP_NUMBER: ${WHATSAPP_NUMBER:-263712210204@s.whatsapp.net}
     depends_on:
       db:
         condition: service_healthy
@@ -116,6 +117,58 @@ services:
       - ./documents:/app/documents:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  webhook-server:
+    profiles: ["orchestration"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: prefect-runtime
+    restart: unless-stopped
+    command: ["python", "-m", "app.webhook_server"]
+    environment:
+      DB_CONN_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/ai_assistant
+      OUTPUT_DIR: /app/data
+      PREFECT_API_URL: http://prefect-server:4200/api
+      PREFECT_USER_ID: ${PREFECT_USER_ID:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LITERT_API_KEY: ${LITERT_API_KEY:-}
+      LITERT_API_URL: ${LITERT_API_URL:-http://192.168.100.11:8055/v1}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      LLM_MODEL: ${LLM_MODEL:-models/gemini-3.5-flash-lite}
+      GMAIL_ADDRESS: ${GMAIL_ADDRESS:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://host.docker.internal:8080}
+      EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-Apex_Web_Services}
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-}
+      WHATSAPP_NUMBER: ${WHATSAPP_NUMBER:-263712210204@s.whatsapp.net}
+      WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+      WHATSAPP_ALLOWED_NUMBERS: ${WHATSAPP_ALLOWED_NUMBERS:-}
+      WEBHOOK_HOST: 0.0.0.0
+      WEBHOOK_PORT: 8055
+    depends_on:
+      db:
+        condition: service_healthy
+      prefect-server:
+        condition: service_healthy
+    ports:
+      - "${WEBHOOK_PORT:-8055}:8055"
+    volumes:
+      - application_data:/app/data
+      - ./app:/app/app:ro
+      - ./core:/app/core:ro
+      - ./prefect_flows:/app/prefect_flows:ro
+      - ./scrapers:/app/scrapers:ro
+      - ./profiles:/app/profiles:ro
+      - ./documents:/app/documents:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8055/health', timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
 volumes:
   postgres_data:

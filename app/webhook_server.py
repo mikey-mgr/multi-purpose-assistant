@@ -10,6 +10,7 @@ Usage: python -m app.webhook_server
 import base64
 import logging
 import os
+import secrets
 from contextlib import asynccontextmanager
 
 import httpx
@@ -22,18 +23,60 @@ logger = logging.getLogger(__name__)
 
 _API_KEY_HEADER = "apikey"
 _EXPECTED_API_KEY = settings.WHATSAPP_API_KEY
+_WEBHOOK_SECRET_HEADER = "x-webhook-secret"
+_WEBHOOK_SECRET = settings.WHATSAPP_WEBHOOK_SECRET
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
 _VALID_MIMETYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
-# Only process messages from these phone number prefixes
-_RESTRICTED_PREFIXES = ["263788667111", "263773393934", "263771906135"]
+# Comma-separated numbers or prefixes. Empty means deny all inbound messages.
+_ALLOWED_NUMBERS = tuple(
+    item.strip().lstrip("+")
+    for item in settings.WHATSAPP_ALLOWED_NUMBERS.split(",")
+    if item.strip()
+)
 
 _EVOLUTION_API_URL = settings.EVOLUTION_API_URL
+_EVOLUTION_WEBHOOK_URL = settings.EVOLUTION_WEBHOOK_URL
+
+
+async def _register_evolution_webhook() -> bool:
+    """Idempotently register this receiver on the configured Evolution instance."""
+    if not _EVOLUTION_WEBHOOK_URL or not _EXPECTED_API_KEY or not _WEBHOOK_SECRET:
+        logger.error(
+            "Evolution webhook registration skipped: URL, API key, or webhook secret is missing"
+        )
+        return False
+
+    url = f"{_EVOLUTION_API_URL.rstrip('/')}/webhook/set/{settings.EVOLUTION_INSTANCE_NAME}"
+    payload = {
+        "webhook": {
+            "enabled": True,
+            "url": _EVOLUTION_WEBHOOK_URL,
+            "webhookByEvents": False,
+            "webhookBase64": False,
+            "events": ["MESSAGES_UPSERT"],
+            "headers": {_WEBHOOK_SECRET_HEADER: _WEBHOOK_SECRET},
+        }
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                url,
+                headers={"apikey": _EXPECTED_API_KEY},
+                json=payload,
+            )
+            response.raise_for_status()
+        logger.info("Evolution webhook registration verified for %s", settings.EVOLUTION_INSTANCE_NAME)
+        return True
+    except Exception as exc:
+        logger.error("Evolution webhook registration failed: %s", exc)
+        return False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("WhatsApp webhook server starting ...")
+    app.state.evolution_webhook_configured = await _register_evolution_webhook()
     yield
     logger.info("WhatsApp webhook server shutting down.")
 
@@ -49,8 +92,15 @@ app = FastAPI(
 # ── Helpers ────────────────────────────────────────────────────────────
 
 def _is_allowed_number(phone_number: str) -> bool:
-    """Check if the phone number is in the allowed prefixes list."""
-    return any(phone_number.startswith(p) for p in _RESTRICTED_PREFIXES)
+    """Check if a normalized phone number matches the configured allowlist."""
+    normalized = phone_number.strip().lstrip("+")
+    return any(normalized.startswith(item) for item in _ALLOWED_NUMBERS)
+
+
+def _is_authenticated(request: Request) -> bool:
+    """Validate Evolution's shared webhook secret without timing leaks."""
+    supplied = request.headers.get(_WEBHOOK_SECRET_HEADER, "")
+    return bool(_WEBHOOK_SECRET) and secrets.compare_digest(supplied, _WEBHOOK_SECRET)
 
 
 async def _fetch_image_base64(instance_id: str, msg_id: str) -> dict | None:
@@ -78,6 +128,9 @@ async def evolution_webhook(request: Request, background_tasks: BackgroundTasks)
     Configure your Evolution API instance to send webhooks to:
     http://<your-host>:8055/api/webhooks/evolution
     """
+    if not _is_authenticated(request):
+        return JSONResponse(status_code=401, content={"error": "Invalid or missing webhook secret"})
+
     try:
         payload = await request.json()
     except Exception:
@@ -216,7 +269,12 @@ async def whatsapp_text_webhook(request: Request, background_tasks: BackgroundTa
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "evolution_webhook_configured": bool(
+            getattr(app.state, "evolution_webhook_configured", False)
+        ),
+    }
 
 
 # ── Background runners ─────────────────────────────────────────────────
@@ -228,6 +286,7 @@ def _run_image_flow(image_base64: str, mimetype: str):
     process_whatsapp_job(
         image_base64=image_base64,
         mimetype=mimetype,
+        user_id=_DEFAULTS["user_id"],
         generate_model=_DEFAULTS["generate_model"],
         generate_provider=_DEFAULTS["generate_provider"],
         generate_fallback_model=_DEFAULTS["generate_fallback_model"],
@@ -242,6 +301,7 @@ def _run_text_flow(text: str):
 
     process_whatsapp_text(
         text=text,
+        user_id=_DEFAULTS["user_id"],
         generate_model=_DEFAULTS["generate_model"],
         generate_provider=_DEFAULTS["generate_provider"],
         generate_fallback_model=_DEFAULTS["generate_fallback_model"],
@@ -261,6 +321,7 @@ if __name__ == "__main__":
     logging.getLogger("prefect").setLevel(logging.WARNING)
     logging.getLogger("app.llm").setLevel(logging.WARNING)
     port = int(os.getenv("WEBHOOK_PORT", "8055"))
+    host = os.getenv("WEBHOOK_HOST", "::")
 
     # ╔═══════════════════════════════════════════════════════════════════════════════╗
     # ║  ⚠️  WARNING — HOOK HOST BINDING — READ BEFORE CHANGING  ⚠️                    ║
@@ -277,4 +338,4 @@ if __name__ == "__main__":
     # ║     curl http://[::1]:8055/health ...                                          ║
     # ║  and never assume one family. Prefer "::" (dual-stack) on this machine.        ║
     # ╚═══════════════════════════════════════════════════════════════════════════════╝
-    uvicorn.run("app.webhook_server:app", host="::", port=port, reload=False)
+    uvicorn.run("app.webhook_server:app", host=host, port=port, reload=False)

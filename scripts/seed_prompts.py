@@ -119,7 +119,7 @@ Before writing anything, analyze the job description to extract a strategy:
 
 3. SKILLS - Prioritise the most relevant skill categories for this specific job (max 4 categories, ordered by relevance). Include only skills supported by the user's profile, with max 5 skills per category. Never copy an unsupported skill from the JD into the resume.
 
-4. PROJECT BULLETS  -  Select max 2/3 projects (the most relevant to the role) and rewrite their bullet points to emphasise relevance to the target role. Discard the rest. These must ONLY appear in the `project_highlights` section, NEVER in the work experience section.
+4. PROJECT BULLETS  -  Select max 3/4 projects (the most relevant to the role) and rewrite their bullet points to emphasise relevance to the target role. Discard the rest. These must ONLY appear in the `project_highlights` section, NEVER in the work experience section.
 
 5. SECTION BOUNDARIES  -  Each resume section must ONLY use data from its corresponding profile section. Work experience uses `work_experience`. Projects use `projects`. Education uses `education`. Certifications use `certifications`. Do not mix data between sections.
 

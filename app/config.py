@@ -39,7 +39,10 @@ class Settings:
     EVOLUTION_API_URL: str = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
     EVOLUTION_INSTANCE_NAME: str = os.getenv("EVOLUTION_INSTANCE_NAME", "Apex_Web_Services")
     WHATSAPP_API_KEY: str | None = os.getenv("WHATSAPP_API_KEY")
-    WHATSAPP_NUMBER: str = os.getenv("WHATSAPP_NUMBER", "263788667111@s.whatsapp.net")
+    WHATSAPP_NUMBER: str = os.getenv("WHATSAPP_NUMBER", "263712210204@s.whatsapp.net")
+    WHATSAPP_WEBHOOK_SECRET: str | None = os.getenv("WHATSAPP_WEBHOOK_SECRET") or WHATSAPP_API_KEY
+    WHATSAPP_ALLOWED_NUMBERS: str = os.getenv("WHATSAPP_ALLOWED_NUMBERS", "")
+    EVOLUTION_WEBHOOK_URL: str | None = os.getenv("EVOLUTION_WEBHOOK_URL")
 
     # ── Email (Gmail SMTP) ──────────────────────────────────────────
     GMAIL_ADDRESS: str | None = os.getenv("GMAIL_ADDRESS")
