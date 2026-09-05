@@ -15,6 +15,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
+from functools import wraps
 
 from core.database import (
     get_session,
@@ -28,8 +29,8 @@ from core.database import (
     normalize_job_title,
     Resume,
     User,
+    application_batch_lock,
     check_email_cooldown,
-    record_email_sent,
 )
 from app.schemas import GeneratedDocument as GDocSchema
 from app.llm import generate_text
@@ -362,6 +363,17 @@ def _load_job_description(job_id: int | None, profile) -> str:
     return json.dumps([m.model_dump() for m in matches], indent=2) if matches else "{}"
 
 
+def _serialized_application_batch(func):
+    """Serialize direct, scheduled, and chained batch dispatches per user."""
+    @wraps(func)
+    def wrapped(user_id: str, *args, **kwargs):
+        with application_batch_lock(user_id):
+            return func(user_id, *args, **kwargs)
+
+    return wrapped
+
+
+@_serialized_application_batch
 def batch_process_applications(
     user_id: str,
     limit: int = 10,
@@ -486,11 +498,13 @@ def batch_process_applications(
         # Only send email if: action is email, recipient exists, no missing docs, AND proceed says apply_now
         if not cooldown_until and action == "email" and recip and not missing_docs and proceed == "apply_now":
             attachment_paths = _build_attachment_list(required_docs, docs, merged_pdf_path)
-            from app.email_sender import send_email
-            ok = send_email(
+            from app.email_sender import send_application_email
+            ok = send_application_email(
                 to=recip,
                 subject=subject,
                 body=body,
+                user_id=user_id,
+                job_id=job.id,
                 attachments=attachment_paths or None,
             )
             logger.info(
@@ -498,9 +512,7 @@ def batch_process_applications(
                 job.id, recip, len(attachment_paths or []),
             )
             email_sent = ok
-            if ok:
-                record_email_sent(recip, user_id, job.id)
-            else:
+            if not ok:
                 logger.warning("Email FAILED for job %s — check email_sender logs above.", job.id)
         elif cooldown_until:
             logger.info(

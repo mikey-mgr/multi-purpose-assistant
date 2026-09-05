@@ -24,7 +24,7 @@ from app.document_generator import ensure_output_dir, cover_letter_to_docx
 from app.utils import unique_path
 from app.rendercv_renderer import build_yaml_dict
 from app.whatsapp_notifier import send_whatsapp
-from app.email_sender import send_email
+from app.email_sender import send_application_email
 from core.database import (
     get_session,
     ScrapedJob,
@@ -38,7 +38,6 @@ from core.database import (
     find_existing_application,
     normalize_job_title,
     check_email_cooldown,
-    record_email_sent,
 )
 
 logger = logging.getLogger(__name__)
@@ -614,15 +613,15 @@ def process_whatsapp_job(
                 run_logger.warning("Failed to build merged PDF: %s", e)
 
         attachment_paths = _build_attachment_list(req_docs, docs, merged_pdf_path)
-        email_sent = send_email(
+        email_sent = send_application_email(
             to=recip,
             subject=subject,
             body=body,
+            user_id=uid,
+            job_id=db_job.id,
             attachments=attachment_paths or None,
         )
         run_logger.info("Email %s to %s", "sent" if email_sent else "FAILED", recip)
-        if email_sent:
-            record_email_sent(recip, uid, db_job.id)
     elif _cooldown_until:
         run_logger.info("Email skipped for WhatsApp job #%d due to cooldown on %s", db_job.id, recip)
 
@@ -942,9 +941,14 @@ def _build_job_pipeline_from_llm(
             except Exception as e:
                 run_logger.warning("Failed to build merged PDF: %s", e)
         attachment_paths = _build_attachment_list(req_docs, docs, merged_pdf_path)
-        email_sent = send_email(to=recip, subject=subject, body=body, attachments=attachment_paths or None)
-        if email_sent:
-            record_email_sent(recip, uid, db_job.id)
+        email_sent = send_application_email(
+            to=recip,
+            subject=subject,
+            body=body,
+            user_id=uid,
+            job_id=db_job.id,
+            attachments=attachment_paths or None,
+        )
 
     if action == "external_url":
         try:

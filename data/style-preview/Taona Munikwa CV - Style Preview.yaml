@@ -1,0 +1,120 @@
+cv:
+  name: Taona Munikwa
+  location: Harare, Zimbabwe
+  email: munikwataona09@gmail.com
+  phone: '+263781830006'
+  headline: Software Developer  ·  DevOps Enthusiast
+  social_networks:
+  - network: LinkedIn
+    username: https://www.linkedin.com/in/taona-munikwa-545b7932a/
+  - network: GitHub
+    username: taonaben
+  sections:
+    PROFESSIONAL PROFILE:
+    - Information Technology graduate with experience building full-stack applications,
+      API-powered systems, and cloud-hosted services.
+    EDUCATION:
+    - institution: Chinhoyi University of Technology
+      area: Information Technology
+      degree: BSc
+      start_date: 2022-01
+      end_date: 2026-08
+      highlights:
+      - 'Grade: GPA 2.7'
+    WORK EXPERIENCE:
+    - company: Mutare City Council
+      position: IT Intern
+      location: Mutare, Zimbabwe
+      start_date: 2024-10
+      end_date: 2025-06
+      highlights:
+      - Provided technical support across council departments.
+    PROJECTS:
+    - name: '[Council Portal System (Click to view)](https://github.com/taonaben/council-portal-frontend)'
+      location: null
+      summary: '*Tech:* Django · Flutter · PostgreSQL'
+      start_date: null
+      end_date: null
+      highlights:
+      - Designed REST API integrations across billing and payment workflows.
+    TECHNICAL SKILLS:
+    - label: Languages
+      details: Python
+design:
+  theme: harvard
+  page:
+    size: a4
+    top_margin: 0.55in
+    bottom_margin: 0.55in
+    left_margin: 0.65in
+    right_margin: 0.65in
+    show_footer: 'False'
+    show_top_note: 'False'
+  colors:
+    body: rgb(55, 65, 81)
+    name: rgb(17, 24, 39)
+    headline: rgb(75, 85, 99)
+    connections: rgb(55, 65, 81)
+    section_titles: rgb(29, 89, 209)
+    links: rgb(0, 82, 204)
+  typography:
+    line_spacing: 0.35em
+    alignment: left
+    font_family: Arial
+    font_size:
+      body: 9.5pt
+      name: 25pt
+      headline: 10pt
+      connections: 8.5pt
+      section_titles: 10.5pt
+    small_caps:
+      section_titles: 'False'
+    bold:
+      name: 'True'
+      headline: 'False'
+      connections: 'False'
+      section_titles: 'True'
+  header:
+    alignment: center
+    space_below_name: 0.08in
+    space_below_headline: 0.08in
+    space_below_connections: 0.22in
+    connections:
+      show_icons: 'False'
+      separator: '|'
+      space_between_connections: 0.08in
+  section_titles:
+    type: with_full_line
+    line_thickness: 0.6pt
+    space_above: 0.20in
+    space_below: 0.08in
+  sections:
+    space_between_regular_entries: 0.45em
+    space_between_text_based_entries: 0.15em
+  entries:
+    date_and_location_width: 0cm
+    space_between_columns: 0cm
+    highlights:
+      space_left: 0.18in
+      space_above: 0.05in
+      space_between_items: 0.02in
+      space_between_bullet_and_text: 0.45em
+  templates:
+    education_entry:
+      main_column: '**DEGREE_WITH_AREA**  |  INSTITUTION  DATE
+
+        HIGHLIGHTS'
+      degree_column: ''
+      date_and_location_column: ''
+    experience_entry:
+      main_column: '**POSITION**  |  COMPANY, DATE
+
+        HIGHLIGHTS'
+      date_and_location_column: ''
+    normal_entry:
+      main_column: '**NAME**
+
+        SUMMARY
+
+        HIGHLIGHTS'
+      date_and_location_column: ''

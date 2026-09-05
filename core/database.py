@@ -2,6 +2,7 @@ import json
 import logging
 import math
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (
@@ -312,6 +313,50 @@ class EmailCooldown(Base):
     sent_count        = Column(Integer, default=0)
 
     __table_args__ = (UniqueConstraint('recipient', 'user_id'),)
+
+
+@contextmanager
+def email_send_lock(recipient: str, user_id: str):
+    """Serialize sends for one candidate/recipient pair using PostgreSQL."""
+    uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+    lock_key = f"application-email:{uid}:{recipient.strip().casefold()}"
+    session = get_session()
+    try:
+        session.execute(
+            text("SELECT pg_advisory_lock(hashtextextended(:lock_key, 0))"),
+            {"lock_key": lock_key},
+        )
+        yield
+    finally:
+        try:
+            session.execute(
+                text("SELECT pg_advisory_unlock(hashtextextended(:lock_key, 0))"),
+                {"lock_key": lock_key},
+            )
+        finally:
+            session.close()
+
+
+@contextmanager
+def application_batch_lock(user_id: str):
+    """Allow only one application-dispatch batch per candidate at a time."""
+    uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+    lock_key = f"application-batch:{uid}"
+    session = get_session()
+    try:
+        session.execute(
+            text("SELECT pg_advisory_lock(hashtextextended(:lock_key, 0))"),
+            {"lock_key": lock_key},
+        )
+        yield
+    finally:
+        try:
+            session.execute(
+                text("SELECT pg_advisory_unlock(hashtextextended(:lock_key, 0))"),
+                {"lock_key": lock_key},
+            )
+        finally:
+            session.close()
 
 
 # ── Relationship Nurturing: Contacts ────────────────────────────────

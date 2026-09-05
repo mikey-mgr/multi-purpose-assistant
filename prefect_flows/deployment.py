@@ -133,6 +133,7 @@ def build():
         # 4. Standalone apply agent (re-run for failed email sends)
         apply_agent_flow.to_deployment(
             name="04-apply-agent",
+            concurrency_limit=1,
             tags=["production", "application"],
             description="Parse apply_instructions for matched jobs and send email / WhatsApp when outbound_enabled=true.",
             parameters={

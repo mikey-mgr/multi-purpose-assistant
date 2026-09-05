@@ -96,3 +96,41 @@ def send_email(
     except smtplib.SMTPException as e:
         logger.error("SMTP error sending to %s: %s", to, e)
         return False
+
+
+def send_application_email(
+    to: str,
+    subject: str,
+    body: str,
+    user_id: str,
+    job_id: int,
+    attachments: list[str] | None = None,
+) -> bool:
+    """Send one application email under a database-backed concurrency lock."""
+    from core.database import (
+        check_email_cooldown,
+        email_send_lock,
+        record_email_sent,
+    )
+
+    with email_send_lock(to, user_id):
+        # Another process may have sent while this process waited for the lock.
+        cooldown = check_email_cooldown(to, user_id)
+        if cooldown:
+            logger.info(
+                "Concurrent/duplicate application email skipped for %s "
+                "(cooldown until %s)",
+                to,
+                cooldown.cooldown_until,
+            )
+            return False
+
+        sent = send_email(
+            to=to,
+            subject=subject,
+            body=body,
+            attachments=attachments,
+        )
+        if sent:
+            record_email_sent(to, user_id, job_id)
+        return sent

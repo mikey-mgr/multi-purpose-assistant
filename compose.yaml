@@ -36,6 +36,7 @@ services:
       LITERT_API_URL: ${LITERT_API_URL:-http://192.168.100.11:8055/v1}
       LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
       LLM_MODEL: ${LLM_MODEL:-models/gemini-3.5-flash-lite}
+      CV_HEADLINE: ${CV_HEADLINE:-Software Developer  ·  DevOps Enthusiast}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
     depends_on:
@@ -59,6 +60,8 @@ services:
     environment:
       PREFECT_HOME: /app/prefect-data
       PREFECT_UI_API_URL: http://127.0.0.1:4200/api
+      # Prefect runs as appuser, so UI assets must be prepared in a writable path.
+      PREFECT_SERVER_UI_STATIC_DIRECTORY: /app/prefect-data/ui
     ports:
       - "${PREFECT_PORT:-4200}:4200"
     volumes:
@@ -89,6 +92,7 @@ services:
       LITERT_API_URL: ${LITERT_API_URL:-http://192.168.100.11:8055/v1}
       LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
       LLM_MODEL: ${LLM_MODEL:-models/gemini-3.5-flash-lite}
+      CV_HEADLINE: ${CV_HEADLINE:-Software Developer  ·  DevOps Enthusiast}
       SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       GMAIL_ADDRESS: ${GMAIL_ADDRESS:-}

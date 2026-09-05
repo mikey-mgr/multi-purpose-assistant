@@ -80,6 +80,16 @@ def _fmt_date(d: str | None) -> str | None:
     return d
 
 
+def _github_username(projects: list[dict]) -> str | None:
+    """Return the first GitHub username present in the candidate's projects."""
+    for project in projects:
+        url = str(project.get("project_url") or "")
+        match = re.match(r"https?://(?:www\.)?github\.com/([^/]+)", url, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return None
+
+
 def build_yaml_dict(
     user: dict[str, Any],
     resume: dict[str, Any],
@@ -115,6 +125,9 @@ def build_yaml_dict(
     social = []
     if user.get('linkedin_url'):
         social.append({"network": "LinkedIn", "username": user['linkedin_url']})
+    github_username = _github_username(projects)
+    if github_username:
+        social.append({"network": "GitHub", "username": github_username})
 
     cv: dict[str, Any] = {
         "cv": {
@@ -122,6 +135,9 @@ def build_yaml_dict(
             "location": location or None,
             "email": user.get("email"),
             "phone": user.get("phone_1") or user.get("phone_2"),
+            "headline": resume.get("headline") or os.getenv(
+                "CV_HEADLINE", "Software Developer  ·  DevOps Enthusiast"
+            ),
             "social_networks": social or None,
         }
     }
@@ -129,7 +145,7 @@ def build_yaml_dict(
     summary_text = overrides.get("summary", resume.get("professional_summary"))
     if summary_text:
         sections: dict[str, list] = {}
-        sections["Professional Summary"] = [summary_text]
+        sections["PROFESSIONAL PROFILE"] = [summary_text]
     else:
         sections = {}
 
@@ -138,9 +154,11 @@ def build_yaml_dict(
     if isinstance(skills_override, list) and all(
         isinstance(s, dict) and "label" in s and "details" in s for s in skills_override
     ):
-        sections["skills"] = skills_override
+        skills_section = skills_override
     elif skills:
-        sections["skills"] = _group_skills(skills)
+        skills_section = _group_skills(skills)
+    else:
+        skills_section = []
 
     # ── Experience ──────────────────────────────────────────────────
     exp_overrides = overrides.get("experience_highlights", {})
@@ -158,7 +176,9 @@ def build_yaml_dict(
             "highlights": _coerce_strings(highlights),
         })
     if exp_list:
-        sections["experience"] = exp_list
+        experience_section = exp_list
+    else:
+        experience_section = []
 
     # ── Education ───────────────────────────────────────────────────
     edu_list = []
@@ -179,7 +199,9 @@ def build_yaml_dict(
             "highlights": highlights or None,
         })
     if edu_list:
-        sections["education"] = edu_list
+        education_section = edu_list
+    else:
+        education_section = []
 
     # ── Certifications ──────────────────────────────────────────────
     cert_list = []
@@ -192,7 +214,9 @@ def build_yaml_dict(
             "date": _fmt_date(cert.get("issue_date")),
         })
     if cert_list:
-        sections["certifications"] = cert_list
+        certifications_section = cert_list
+    else:
+        certifications_section = []
 
     # ── Projects ────────────────────────────────────────────────────
     proj_overrides = overrides.get("project_highlights", {})
@@ -209,6 +233,10 @@ def build_yaml_dict(
             entry = {
                 "name": pname,
                 "location": None,
+                "summary": (
+                    f"*Tech:* {' · '.join(proj.get('tech_stack') or [])}"
+                    if proj.get("tech_stack") else None
+                ),
                 "start_date": _fmt_date(proj.get("start_date")),
                 "end_date": _fmt_date(proj.get("end_date")),
                 "highlights": _coerce_strings(highlights) or None,
@@ -226,6 +254,10 @@ def build_yaml_dict(
             entry = {
                 "name": pname,
                 "location": None,
+                "summary": (
+                    f"*Tech:* {' · '.join(proj.get('tech_stack') or [])}"
+                    if proj.get("tech_stack") else None
+                ),
                 "start_date": _fmt_date(proj.get("start_date")),
                 "end_date": _fmt_date(proj.get("end_date")),
                 "highlights": _coerce_strings(highlights) or None,
@@ -234,7 +266,9 @@ def build_yaml_dict(
                 entry["name"] = f"[{pname} (Click to view)]({purl})"
             proj_list.append(entry)
     if proj_list:
-        sections["projects"] = proj_list
+        projects_section = proj_list
+    else:
+        projects_section = []
 
     # ── References ────────────────────────────────────────────────────
     ref_overrides = overrides.get("references")
@@ -257,14 +291,109 @@ def build_yaml_dict(
                 "highlights": contact_lines or None,
             })
         if ref_list:
-            sections["references"] = ref_list
+            references_section = ref_list
+        else:
+            references_section = []
+    else:
+        references_section = []
+
+    # Keep the same reading order as the candidate's established CV style.
+    if education_section:
+        sections["EDUCATION"] = education_section
+    if experience_section:
+        sections["WORK EXPERIENCE"] = experience_section
+    if projects_section:
+        sections["PROJECTS"] = projects_section
+    if skills_section:
+        sections["TECHNICAL SKILLS"] = skills_section
+    if certifications_section:
+        sections["CERTIFICATIONS"] = certifications_section
+    if references_section:
+        sections["REFERENCES"] = references_section
 
     cv["cv"]["sections"] = sections
     cv["design"] = {
         "theme": "harvard",
+        "page": {
+            "size": "a4",
+            "top_margin": "0.55in",
+            "bottom_margin": "0.55in",
+            "left_margin": "0.65in",
+            "right_margin": "0.65in",
+            "show_footer": False,
+            "show_top_note": False,
+        },
+        "colors": {
+            "body": "rgb(55, 65, 81)",
+            "name": "rgb(17, 24, 39)",
+            "headline": "rgb(75, 85, 99)",
+            "connections": "rgb(55, 65, 81)",
+            "section_titles": "rgb(29, 89, 209)",
+            "links": "rgb(0, 82, 204)",
+        },
+        "typography": {
+            "line_spacing": "0.35em",
+            "alignment": "left",
+            "font_family": "Arial",
+            "font_size": {
+                "body": "9.5pt",
+                "name": "25pt",
+                "headline": "10pt",
+                "connections": "8.5pt",
+                "section_titles": "10.5pt",
+            },
+            "small_caps": {"section_titles": False},
+            "bold": {
+                "name": True,
+                "headline": False,
+                "connections": False,
+                "section_titles": True,
+            },
+        },
+        "header": {
+            "alignment": "center",
+            "space_below_name": "0.08in",
+            "space_below_headline": "0.08in",
+            "space_below_connections": "0.22in",
+            "connections": {
+                "show_icons": False,
+                "separator": "|",
+                "space_between_connections": "0.08in",
+            },
+        },
+        "section_titles": {
+            "type": "with_full_line",
+            "line_thickness": "0.6pt",
+            "space_above": "0.20in",
+            "space_below": "0.08in",
+        },
+        "sections": {
+            "space_between_regular_entries": "0.45em",
+            "space_between_text_based_entries": "0.15em",
+        },
+        "entries": {
+            "date_and_location_width": "0cm",
+            "space_between_columns": "0cm",
+            "highlights": {
+                "space_left": "0.18in",
+                "space_above": "0.05in",
+                "space_between_items": "0.02in",
+                "space_between_bullet_and_text": "0.45em",
+            },
+        },
         "templates": {
             "education_entry": {
+                "main_column": "**DEGREE_WITH_AREA**  |  INSTITUTION  DATE\nHIGHLIGHTS",
                 "degree_column": "",
+                "date_and_location_column": "",
+            },
+            "experience_entry": {
+                "main_column": "**POSITION**  |  COMPANY, DATE\nHIGHLIGHTS",
+                "date_and_location_column": "",
+            },
+            "normal_entry": {
+                "main_column": "**NAME**\nSUMMARY\nHIGHLIGHTS",
+                "date_and_location_column": "",
             },
         },
     }
