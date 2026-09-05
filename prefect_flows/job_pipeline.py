@@ -15,7 +15,6 @@ import logging
 
 from prefect import flow, task, get_run_logger
 
-from app.config import settings
 from app.matcher import batch_match_jobs
 from app.orchestrator import process_job_for_user, batch_process_applications
 from app.whatsapp_notifier import send_flow_error_notification
@@ -37,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 # ── Tasks ──────────────────────────────────────────────────────────────
 
+
 @task(retries=2, retry_delay_seconds=30)
 def scrape_jobs_task(
     site_names: list[str] | None = None,
@@ -44,6 +44,7 @@ def scrape_jobs_task(
 ) -> "pd.DataFrame | None":
     """Scrape job boards and return DataFrame. Insert happens in a separate task."""
     import pandas as pd  # noqa: F401 — keep for type hint
+
     run_logger = get_run_logger()
     site_names = site_names or ["iharare", "vacancybox", "vacancymail"]
     run_logger.info("Scraping job boards %s (max_pages=%s) ...", site_names, max_pages)
@@ -64,10 +65,13 @@ def scrape_jobs_task(
 def store_jobs_task(jobs_df: "pd.DataFrame") -> int:
     """Insert scraped jobs into PostgreSQL. Retries independently of scraping."""
     from core.database import init_db, insert_jobs
+
     run_logger = get_run_logger()
     init_db()
     count = insert_jobs(jobs_df.to_dict("records"), log_fn=run_logger.info)
-    run_logger.info("Inserted %d new jobs into database (of %d scraped).", count, len(jobs_df))
+    run_logger.info(
+        "Inserted %d new jobs into database (of %d scraped).", count, len(jobs_df)
+    )
     return count
 
 
@@ -82,8 +86,12 @@ def match_pending_jobs(
 ) -> int:
     """Batch-classify unscored jobs and persist decisions."""
     decisions = batch_match_jobs(
-        user_id, limit=limit, model=match_model, provider=match_provider,
-        fallback_model=match_fallback_model, fallback_provider=match_fallback_provider,
+        user_id,
+        limit=limit,
+        model=match_model,
+        provider=match_provider,
+        fallback_model=match_fallback_model,
+        fallback_provider=match_fallback_provider,
     )
     return len(decisions)
 
@@ -127,19 +135,28 @@ def dedup_generated_jobs(user_id: str) -> int:
     """Post-generation dedup sweep: for duplicate (title, company) groups,
     keep the first generated job and mark the rest as 'duplicate'."""
     from collections import defaultdict
+
     run_logger = get_run_logger()
     session = get_session()
     try:
-        rows = session.query(JobMatch, ScrapedJob).join(
-            ScrapedJob, JobMatch.job_id == ScrapedJob.id
-        ).filter(
-            JobMatch.user_id == user_id,
-            JobMatch.status == "generated",
-        ).all()
+        rows = (
+            session.query(JobMatch, ScrapedJob)
+            .join(ScrapedJob, JobMatch.job_id == ScrapedJob.id)
+            .filter(
+                JobMatch.user_id == user_id,
+                JobMatch.status == "generated",
+            )
+            .all()
+        )
 
-        groups: dict[tuple[str, str], list[tuple[JobMatch, ScrapedJob]]] = defaultdict(list)
+        groups: dict[tuple[str, str], list[tuple[JobMatch, ScrapedJob]]] = defaultdict(
+            list
+        )
         for match, job in rows:
-            key = (normalize_job_title(job.title or ""), (job.company or "").strip().lower())
+            key = (
+                normalize_job_title(job.title or ""),
+                (job.company or "").strip().lower(),
+            )
             groups[key].append((match, job))
 
         dedup_count = 0
@@ -154,7 +171,9 @@ def dedup_generated_jobs(user_id: str) -> int:
                 dedup_count += 1
                 run_logger.info(
                     "Dedup: marked JobMatch #%d (job #%d) as duplicate (same title+company as #%d)",
-                    match.id, match.job_id, group[0][0].job_id,
+                    match.id,
+                    match.job_id,
+                    group[0][0].job_id,
                 )
 
         return dedup_count
@@ -174,6 +193,7 @@ def mark_processed(result: dict) -> None:
 
 
 # ── Flows ──────────────────────────────────────────────────────────────
+
 
 @flow(
     name="scrape-and-store",
@@ -271,10 +291,19 @@ def match_jobs_flow(
             remaining = count_unscored_jobs(user_id)
             if remaining == 0:
                 break
-            run_logger.info("Iteration %d/%d: %d unscored jobs remaining.", iteration, max_iterations, remaining)
+            run_logger.info(
+                "Iteration %d/%d: %d unscored jobs remaining.",
+                iteration,
+                max_iterations,
+                remaining,
+            )
             matched = match_pending_jobs(
-                user_id, limit=limit, match_model=match_model, match_provider=match_provider,
-                match_fallback_model=match_fallback_model, match_fallback_provider=match_fallback_provider,
+                user_id,
+                limit=limit,
+                match_model=match_model,
+                match_provider=match_provider,
+                match_fallback_model=match_fallback_model,
+                match_fallback_provider=match_fallback_provider,
             )
             total_matched += matched
 
@@ -329,7 +358,12 @@ def generate_matched_flow(
             remaining = count_matched_unprocessed_jobs(user_id)
             if remaining == 0:
                 break
-            run_logger.info("Iteration %d/%d: %d matched-but-unprocessed jobs remaining.", iteration, max_iterations, remaining)
+            run_logger.info(
+                "Iteration %d/%d: %d matched-but-unprocessed jobs remaining.",
+                iteration,
+                max_iterations,
+                remaining,
+            )
             jobs = fetch_matched_jobs(user_id, limit=limit)
             if not jobs:
                 break
@@ -350,7 +384,9 @@ def generate_matched_flow(
         if total_generated:
             dedup_count = dedup_generated_jobs(user_id)
             if dedup_count:
-                run_logger.info("Post-generation dedup: %d duplicate jobs marked.", dedup_count)
+                run_logger.info(
+                    "Post-generation dedup: %d duplicate jobs marked.", dedup_count
+                )
 
         if chain_next and total_generated > 0:
             run_logger.info("chain_next=True — triggering 04-apply-agent...")
@@ -407,7 +443,12 @@ def apply_agent_flow(
             remaining = count_generated_unapplied_jobs(user_id)
             if remaining == 0:
                 break
-            run_logger.info("Iteration %d/%d: %d unapplied jobs remaining.", iteration, max_iterations, remaining)
+            run_logger.info(
+                "Iteration %d/%d: %d unapplied jobs remaining.",
+                iteration,
+                max_iterations,
+                remaining,
+            )
             results = batch_process_applications(
                 user_id=user_id,
                 limit=limit,
@@ -420,10 +461,16 @@ def apply_agent_flow(
             for r in results:
                 run_logger.info(
                     "Apply agent: job=%s action=%s email=%s whatsapp=%s",
-                    r.get("job_id"), r.get("action"),
-                    r.get("email_sent"), r.get("whatsapp_sent"),
+                    r.get("job_id"),
+                    r.get("action"),
+                    r.get("email_sent"),
+                    r.get("whatsapp_sent"),
                 )
-        run_logger.info("Batch apply complete — %d jobs processed across %d iterations.", total_processed, iteration)
+        run_logger.info(
+            "Batch apply complete — %d jobs processed across %d iterations.",
+            total_processed,
+            iteration,
+        )
     except Exception as e:
         run_logger.error("Apply agent flow failed: %s", e)
         send_flow_error_notification("apply-agent", str(e))
@@ -459,6 +506,7 @@ def manual_generate(
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) >= 3 and sys.argv[1] == "--manual":
         manual_generate(user_id=sys.argv[2], job_id=int(sys.argv[3]))
     else:

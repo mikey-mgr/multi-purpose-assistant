@@ -36,7 +36,7 @@ _DEFAULTS = {
     "generate_provider": "gemini",
     "generate_fallback_provider": "local",
     "match_limit": 15,  # 02-matcher limit
-    "job_limit": 5,    # 03-generator limit
+    "job_limit": 5,  # 03-generator limit
     "scrape_site_names": None,  # None = all sites
     "scrape_max_pages": {"vacancybox": 1, "iharare": 2, "vacancymail": 2},
     "chain_next": False,  # auto-chain 01→02→03→04 on scheduled runs (opt-in)
@@ -61,9 +61,15 @@ _DEFAULTS["outbound_enabled"] = _OUTBOUND_ENABLED
 
 def build():
     if not _DEFAULTS["user_id"]:
-        raise RuntimeError("PREFECT_USER_ID must identify the imported candidate profile")
+        raise RuntimeError(
+            "PREFECT_USER_ID must identify the imported candidate profile"
+        )
 
-    scraper_schedules = [CronSchedule(cron="0 7-19/3 * * *", timezone="Africa/Harare")] if _SCHEDULES_ENABLED else []
+    scraper_schedules = (
+        [CronSchedule(cron="0 7-19/3 * * *", timezone="Africa/Harare")]
+        if _SCHEDULES_ENABLED
+        else []
+    )
 
     serve(
         # 1. Standalone scrape — auto-chains 02→03→04 when scheduled
