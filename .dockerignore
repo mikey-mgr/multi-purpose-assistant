@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+data/
+market-dashboard/node_modules/
+market-dashboard/dist/
+server_stderr.txt

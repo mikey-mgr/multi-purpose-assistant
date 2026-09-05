@@ -1,0 +1,45 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: multipurpose_assistant_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # init.sql creates the application database from the default postgres DB.
+      POSTGRES_DB: postgres
+    ports:
+      # 5432 and 5433 are already used by other local Docker projects.
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db_configs/migrations:/opt/app/migrations:ro
+      - ./db_configs/docker-init/01-initialize-database.sh:/docker-entrypoint-initdb.d/01-initialize-database.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d ai_assistant"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  app:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DB_CONN_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/ai_assistant
+      OUTPUT_DIR: /app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - application_data:/app/data
+    # This is a safe utility container. Pipeline stages run only when invoked.
+    command: ["sleep", "infinity"]
+
+volumes:
+  postgres_data:
+    name: multipurpose-assistant-postgres-data
+  application_data:
+    name: multipurpose-assistant-application-data

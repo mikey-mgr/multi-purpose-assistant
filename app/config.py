@@ -26,7 +26,7 @@ class Settings:
     # ── LLM Provider (LiteRT-LM local GPU primary, Gemini fallback) ──
     GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY")
     LITERT_API_URL: str = os.getenv("LITERT_API_URL", "http://192.168.100.11:8055/v1")
-    LITERT_API_KEY: str | None = os.getenv("LITERT_API_KEY", "S20FEHomeServerTrojanAPIKey")
+    LITERT_API_KEY: str | None = os.getenv("LITERT_API_KEY")
 
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "local")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gemma-4-e2b-it")
@@ -37,6 +37,7 @@ class Settings:
     SERPAPI_API_KEY: str | None = os.getenv("SERPAPI_API_KEY")
     TAVILY_API_KEY: str | None = os.getenv("TAVILY_API_KEY")
     EVOLUTION_API_URL: str = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
+    WHATSAPP_API_KEY: str | None = os.getenv("WHATSAPP_API_KEY")
 
     # ── Email (Gmail SMTP) ──────────────────────────────────────────
     GMAIL_ADDRESS: str | None = os.getenv("GMAIL_ADDRESS")

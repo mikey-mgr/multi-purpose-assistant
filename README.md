@@ -75,6 +75,32 @@ Three entry points:
 
 ## Quick Setup
 
+### Docker foundation
+
+Docker Compose provides PostgreSQL with pgvector and an opt-in Python utility
+container. The database is published on host port `5434` because common local
+PostgreSQL ports are already in use. Inside Compose, application containers use
+`db:5432`.
+
+```powershell
+# Start the persistent database
+docker compose up -d db
+
+# Build the Python application image
+docker compose build app
+
+# Run a one-off application command (does not start Prefect or outbound jobs)
+docker compose run --rm app python -c "from core.database import engine; print(engine.url.database)"
+```
+
+Database data is stored in the named volume
+`multipurpose-assistant-postgres-data`. `docker compose down` preserves it;
+`docker compose down -v` deletes it.
+
+For DBeaver, connect to `localhost:5434`, database `ai_assistant`, using the
+configured `POSTGRES_USER` and `POSTGRES_PASSWORD` (both default to `postgres`
+for local development).
+
 ### 1. Database
 ```bash
 psql -U postgres -f db_configs/migrations/init.sql
