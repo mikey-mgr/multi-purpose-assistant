@@ -30,11 +30,20 @@ services:
     environment:
       DB_CONN_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/ai_assistant
       OUTPUT_DIR: /app/data
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LITERT_API_KEY: ${LITERT_API_KEY:-}
+      LITERT_API_URL: ${LITERT_API_URL:-http://192.168.100.11:8055/v1}
+      LLM_PROVIDER: ${LLM_PROVIDER:-local}
+      LLM_MODEL: ${LLM_MODEL:-gemma-4-e2b-it}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - application_data:/app/data
+      - ./profiles:/app/profiles:ro
+      - ./documents:/app/documents:ro
     # This is a safe utility container. Pipeline stages run only when invoked.
     command: ["sleep", "infinity"]
 

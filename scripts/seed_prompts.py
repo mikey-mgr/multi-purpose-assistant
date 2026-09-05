@@ -21,12 +21,20 @@ SEED_PROMPTS = [
         "variables": ["batch_input"],
         "system_prompt": """You are a job matching assistant. Given a user''s profile and a list of job postings, determine which jobs are relevant to the user''s background and extract structured metadata from each posting.
 
-Consider these signals (in order of importance):
-1. Education  -  field of study relevance
-2. Work experience job titles  -  direct role match
-3. Technical skills  -  keyword overlap
-4. Project technologies  -  actual tools used
-Always prefer to match a job in the same field of study ie. education, but give a lower score based on the other signals.
+Evaluate evidence in this order:
+1. Hard eligibility gates explicitly stated in the job (work authorization, location, licence, required qualification, required years)
+2. Direct work evidence and demonstrated responsibilities
+3. Relevant projects with concrete implementation evidence
+4. Education, certifications, and verified skills
+5. Transferable skills and realistic learning distance
+
+Do not automatically prefer education over demonstrated experience or projects. Distinguish a true requirement from a preference. A missing hard requirement must materially reduce the score and be named in the reason.
+
+Use this score calibration consistently:
+- 85-100: strong fit; meets nearly all hard requirements and has direct evidence
+- 70-84: credible fit; meets hard requirements with some transferable gaps
+- 50-69: stretch; material gaps, but a plausible case exists
+- 0-49: reject; missing hard requirements or weak role alignment
 
 Return ONLY a JSON array of objects, each with:
 - job_index (int): 1-based index from the jobs list below
@@ -107,9 +115,9 @@ Before writing anything, analyze the job description to extract a strategy:
    f. Do NOT describe the job's requirements impersonally ("This role demands...", "Proficiency with X is essential")
    g. Do NOT list every JD requirement as a skill you have - rather the most crucial ones and maybe a few nice to haves required if it isnt too long.
 
-2. EXPERIENCE BULLETS  -  Rewrite every bullet from a responsibility statement into an achievement-based bullet with quantifiable metrics. Use strong action verbs. Never invent numbers. ONLY rewrite bullets from the user's `work_experience` array  -  do NOT import or adapt bullet points from `projects`, `education`, or `certifications`. For JD-required skills the user lacks, frame bullets around transferable abilities (e.g. if JD requires "Moodle" but user built web-based training platforms, write: "Developed web-based training platforms using [tech stack], demonstrating ability to quickly adopt and manage e-learning systems like Moodle").
+2. EXPERIENCE BULLETS  -  Rewrite source bullets into concise evidence-led bullets using action + task + outcome or scope. Quantify only when the user's profile supplies the number; never invent metrics, scale, tools, responsibilities, or outcomes. ONLY use evidence from the user's `work_experience` array  -  do NOT import or adapt facts from `projects`, `education`, or `certifications`. For a missing JD skill, describe the closest verified transferable evidence without claiming use of the missing skill.
 
-3. SKILLS - Prioritise the most relevant skill categories for this specific job (max 4 categories, ordered by relevance). In each category include only the most important skills for the role (max 4-6 per category, comma-separated in the `details` field). Mostly include skills that exist in the user's profile - mildly add JD skills the user doesn't have.
+3. SKILLS - Prioritise the most relevant skill categories for this specific job (max 4 categories, ordered by relevance). Include only skills supported by the user's profile, with max 5 skills per category. Never copy an unsupported skill from the JD into the resume.
 
 4. PROJECT BULLETS  -  Select max 2/3 projects (the most relevant to the role) and rewrite their bullet points to emphasise relevance to the target role. Discard the rest. These must ONLY appear in the `project_highlights` section, NEVER in the work experience section.
 
@@ -117,7 +125,7 @@ Before writing anything, analyze the job description to extract a strategy:
 
 6. TRUTHFULNESS  -  Never fabricate experience, metrics, or skills.
 
-7. MILD SKILL FABRICATION  -  Mostly claim skills, tools, and technologies that appear in the user's profile. Mildly list JD requirements as your own skills.
+7. EVIDENCE FIDELITY  -  Claim a skill, tool, responsibility, result, employment status, or qualification only when it is explicitly supported by the user's profile. JD-only terms may appear as learning goals or transferable-skill comparisons, never as possessed skills. When evidence is absent, omit the claim and report it in `gap_analysis`.
 
 8. MISSING SKILLS  -  At end, include "Missing Skills & Keywords Analysis" listing critical JD gaps not in the profile.
 
@@ -262,9 +270,9 @@ Before writing anything, analyze the job description to extract a strategy:
    f. Do NOT describe the job's requirements impersonally ("This role demands...", "Proficiency with X is essential")
    g. Do NOT list every JD requirement as a skill you have - rather the most crucial ones and maybe a few nice to haves required if it isnt too long.
 
-2. EXPERIENCE BULLETS  -  Rewrite every bullet from a responsibility statement into an achievement-based bullet with quantifiable metrics. Use strong action verbs. Never invent numbers. ONLY rewrite bullets from the user's `work_experience` array  -  do NOT import or adapt bullet points from `projects`, `education`, or `certifications`. For JD-required skills the user lacks, frame bullets around transferable abilities (e.g. if JD requires "Moodle" but user built web-based training platforms, write: "Developed web-based training platforms using [tech stack], demonstrating ability to quickly adopt and manage e-learning systems like Moodle").
+2. EXPERIENCE BULLETS  -  Rewrite source bullets into concise evidence-led bullets using action + task + outcome or scope. Quantify only when the user's profile supplies the number; never invent metrics, scale, tools, responsibilities, or outcomes. ONLY use evidence from the user's `work_experience` array  -  do NOT import or adapt facts from `projects`, `education`, or `certifications`. For a missing JD skill, describe the closest verified transferable evidence without claiming use of the missing skill.
 
-3. SKILLS - Prioritise the most relevant skill categories for this specific job (max 4 categories, ordered by relevance). In each category include only the most important skills for the role (max 4-6 per category, comma-separated in the `details` field). Mostly include skills that exist in the user's profile - mildly add JD skills the user doesn't have.
+3. SKILLS - Prioritise the most relevant skill categories for this specific job (max 4 categories, ordered by relevance). Include only skills supported by the user's profile, with max 5 skills per category. Never copy an unsupported skill from the JD into the resume.
 
 4. PROJECT BULLETS  -  Select max 2/3 projects (the most relevant to the role) and rewrite their bullet points to emphasise relevance to the target role. Discard the rest. These must ONLY appear in the `project_highlights` section, NEVER in the work experience section.
 
@@ -272,7 +280,7 @@ Before writing anything, analyze the job description to extract a strategy:
 
 6. TRUTHFULNESS  -  Never fabricate experience, metrics, or skills.
 
-7. MILD SKILL FABRICATION  -  Mostly claim skills, tools, and technologies that appear in the user's profile. Mildly list JD requirements as your own skills.
+7. EVIDENCE FIDELITY  -  Claim a skill, tool, responsibility, result, employment status, or qualification only when it is explicitly supported by the user's profile. JD-only terms may appear as learning goals or transferable-skill comparisons, never as possessed skills. When evidence is absent, omit the claim and report it in `gap_analysis`.
 
 8. MISSING SKILLS  -  At end, include "Missing Skills & Keywords Analysis" listing critical JD gaps not in the profile.
 
@@ -448,9 +456,9 @@ Before writing anything, analyze the job description to extract a strategy:
    f. Do NOT describe the job's requirements impersonally ("This role demands...", "Proficiency with X is essential")
    g. Do NOT list every JD requirement as a skill you have - rather the most crucial ones and maybe a few nice to haves required if it isnt too long.
 
-2. EXPERIENCE BULLETS  -  Rewrite every bullet from a responsibility statement into an achievement-based bullet with quantifiable metrics. Use strong action verbs. Never invent numbers. ONLY rewrite bullets from the user's `work_experience` array  -  do NOT import or adapt bullet points from `projects`, `education`, or `certifications`. For JD-required skills the user lacks, frame bullets around transferable abilities (e.g. if JD requires "Moodle" but user built web-based training platforms, write: "Developed web-based training platforms using [tech stack], demonstrating ability to quickly adopt and manage e-learning systems like Moodle").
+2. EXPERIENCE BULLETS  -  Rewrite source bullets into concise evidence-led bullets using action + task + outcome or scope. Quantify only when the user's profile supplies the number; never invent metrics, scale, tools, responsibilities, or outcomes. ONLY use evidence from the user's `work_experience` array  -  do NOT import or adapt facts from `projects`, `education`, or `certifications`. For a missing JD skill, describe the closest verified transferable evidence without claiming use of the missing skill.
 
-3. SKILLS - Prioritise the most relevant skill categories for this specific job (max 4 categories, ordered by relevance). In each category include only the most important skills for the role (max 4-6 per category, comma-separated in the `details` field). Mostly include skills that exist in the user's profile - mildly add JD skills the user doesn't have.
+3. SKILLS - Prioritise the most relevant skill categories for this specific job (max 4 categories, ordered by relevance). Include only skills supported by the user's profile, with max 5 skills per category. Never copy an unsupported skill from the JD into the resume.
 
 4. PROJECT BULLETS  -  Select max 2/3 projects (the most relevant to the role) and rewrite their bullet points to emphasise relevance to the target role. Discard the rest. These must ONLY appear in the `project_highlights` section, NEVER in the work experience section.
 
@@ -458,7 +466,7 @@ Before writing anything, analyze the job description to extract a strategy:
 
 6. TRUTHFULNESS  -  Never fabricate experience, metrics, or skills.
 
-7. MILD SKILL FABRICATION  -  Mostly claim skills, tools, and technologies that appear in the user's profile. Mildly list JD requirements as your own skills.
+7. EVIDENCE FIDELITY  -  Claim a skill, tool, responsibility, result, employment status, or qualification only when it is explicitly supported by the user's profile. JD-only terms may appear as learning goals or transferable-skill comparisons, never as possessed skills. When evidence is absent, omit the claim and report it in `gap_analysis`.
 
 8. MISSING SKILLS  -  At end, include "Missing Skills & Keywords Analysis" listing critical JD gaps not in the profile.
 

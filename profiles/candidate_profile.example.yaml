@@ -1,0 +1,61 @@
+schema_version: 1
+profile_status: draft
+
+source_documents:
+  - "https://docs.google.com/document/d/replace-with-source-id"
+
+review_notes:
+  - "Resolve every factual conflict before changing profile_status to confirmed."
+
+user:
+  first_name: First
+  last_name: Last
+  email: candidate@example.com
+  phone_1: "+263000000000"
+  phone_2: null
+  linkedin_url: null
+  location_city: Harare
+  location_country: Zimbabwe
+
+resume:
+  version_name: canonical-v1
+  professional_summary: "A factual, role-neutral summary of the candidate's verified background."
+  is_active: true
+
+  work_experience:
+    - company_name: Example Organisation
+      job_title: IT Intern
+      location: Harare, Zimbabwe
+      start_date: 2024-01-01
+      end_date: 2024-12-31
+      bullet_points:
+        - "Supported verified systems and users; include metrics only when documented."
+
+  projects:
+    - project_name: Example Project
+      description: "A factual description of what was built and why."
+      tech_stack: [Python, Django, PostgreSQL]
+      project_url: null
+      bullet_points:
+        - "Implemented a verified project capability."
+
+  education:
+    - institution_name: Example University
+      degree_type: BSc
+      field_of_study: Information Technology
+      start_date: 2022-01-01
+      end_date: 2026-08-31
+      grade_or_class: null
+      document_path: null
+
+  certifications: []
+
+  skills:
+    - name: Python
+      type: Language
+    - name: Django
+      type: Framework
+    - name: PostgreSQL
+      type: Database
+
+documents: []

@@ -101,6 +101,29 @@ For DBeaver, connect to `localhost:5434`, database `ai_assistant`, using the
 configured `POSTGRES_USER` and `POSTGRES_PASSWORD` (both default to `postgres`
 for local development).
 
+### Candidate profile import
+
+Candidate data is maintained in `profiles/candidate_profile.yaml`, which is
+gitignored and mounted read-only into the application container. Start from
+`profiles/candidate_profile.example.yaml` or the locally generated draft.
+
+Validation is the default and never writes to PostgreSQL:
+
+```powershell
+docker compose run --rm app python scripts/import_candidate_profile.py profiles/candidate_profile.yaml
+```
+
+After resolving every review note, set `profile_status: confirmed`, choose a
+new immutable `version_name`, and explicitly apply it:
+
+```powershell
+docker compose run --rm app python scripts/import_candidate_profile.py profiles/candidate_profile.yaml --apply
+```
+
+The importer updates the user by email, creates a new resume version and all
+of its child records in one transaction, and activates that version. It refuses
+draft profiles and duplicate resume version names.
+
 ### 1. Database
 ```bash
 psql -U postgres -f db_configs/migrations/init.sql

@@ -9,3 +9,6 @@ education/
 proposal_proj_edifications.md
 misc/
 merged/
+profiles/candidate_profile.yaml
+profiles/*.private.yaml
+documents/*

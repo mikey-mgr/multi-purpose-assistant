@@ -11,3 +11,6 @@ data/
 market-dashboard/node_modules/
 market-dashboard/dist/
 server_stderr.txt
+profiles/candidate_profile.yaml
+profiles/*.private.yaml
+documents/*
