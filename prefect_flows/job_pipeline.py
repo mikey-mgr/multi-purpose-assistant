@@ -98,10 +98,10 @@ def fetch_matched_jobs(user_id: str, limit: int = 10) -> list:
 def generate_application(
     job_id: int,
     user_id: str,
-    generate_model: str = "gemma-4-e2b-it",
-    generate_provider: str = "local",
-    generate_fallback_model: str = "models/gemini-3.5-flash-lite",
-    generate_fallback_provider: str = "gemini",
+    generate_model: str = "models/gemini-3.5-flash-lite",
+    generate_provider: str = "gemini",
+    generate_fallback_model: str = "gemma-4-e2b-it",
+    generate_fallback_provider: str = "local",
 ) -> dict:
     """Run the full generation pipeline for one matched job + user."""
     docs = process_job_for_user(
@@ -197,6 +197,7 @@ def scrape_and_store(
     match_limit: int = 50,
     job_limit: int = 10,
     chain_next: bool = False,
+    outbound_enabled: bool = False,
     max_iterations: int = 3,
 ):
     """Scrape job boards. If chain_next=True, triggers 02→03→04 after scraping."""
@@ -228,6 +229,7 @@ def scrape_and_store(
             match_fallback_model=match_fallback_model,
             match_fallback_provider=match_fallback_provider,
             chain_next=True,
+            outbound_enabled=outbound_enabled,
             max_iterations=max_iterations,
         )
 
@@ -258,6 +260,7 @@ def match_jobs_flow(
     match_fallback_model: str = "gemma-4-e2b-it",
     match_fallback_provider: str = "local",
     chain_next: bool = False,
+    outbound_enabled: bool = False,
     max_iterations: int = 3,
 ) -> int:
     """Match unscored jobs for a user. Loops until all caught up or max_iterations. If chain_next=True, triggers 03→04."""
@@ -282,11 +285,12 @@ def match_jobs_flow(
             generate_matched_flow(
                 user_id=user_id,
                 limit=limit,
-                generate_model="gemma-4-e2b-it",
-                generate_provider="local",
-                generate_fallback_model="models/gemini-3.5-flash-lite",
-                generate_fallback_provider="gemini",
+                generate_model="models/gemini-3.5-flash-lite",
+                generate_provider="gemini",
+                generate_fallback_model="gemma-4-e2b-it",
+                generate_fallback_provider="local",
                 chain_next=True,
+                outbound_enabled=outbound_enabled,
                 max_iterations=max_iterations,
             )
 
@@ -307,11 +311,12 @@ def match_jobs_flow(
 def generate_matched_flow(
     user_id: str,
     limit: int = 10,
-    generate_model: str = "gemma-4-e2b-it",
-    generate_provider: str = "local",
-    generate_fallback_model: str = "models/gemini-3.5-flash-lite",
-    generate_fallback_provider: str = "gemini",
+    generate_model: str = "models/gemini-3.5-flash-lite",
+    generate_provider: str = "gemini",
+    generate_fallback_model: str = "gemma-4-e2b-it",
+    generate_fallback_provider: str = "local",
     chain_next: bool = False,
+    outbound_enabled: bool = False,
     max_iterations: int = 3,
 ):
     """
@@ -356,6 +361,7 @@ def generate_matched_flow(
                 generate_provider=generate_provider,
                 generate_fallback_model=generate_fallback_model,
                 generate_fallback_provider=generate_fallback_provider,
+                outbound_enabled=outbound_enabled,
                 max_iterations=max_iterations,
             )
     except Exception as e:
@@ -374,10 +380,11 @@ def generate_matched_flow(
 def apply_agent_flow(
     user_id: str,
     limit: int = 10,
-    generate_model: str = "gemma-4-e2b-it",
-    generate_provider: str = "local",
-    generate_fallback_model: str = "models/gemini-3.5-flash-lite",
-    generate_fallback_provider: str = "gemini",
+    generate_model: str = "models/gemini-3.5-flash-lite",
+    generate_provider: str = "gemini",
+    generate_fallback_model: str = "gemma-4-e2b-it",
+    generate_fallback_provider: str = "local",
+    outbound_enabled: bool = False,
     chain_next: bool = False,
     max_iterations: int = 3,
 ):
@@ -387,6 +394,13 @@ def apply_agent_flow(
     chain_next is accepted for pipeline consistency (no next flow to chain to).
     """
     run_logger = get_run_logger()
+    if not outbound_enabled:
+        run_logger.warning(
+            "Outbound is disabled (outbound_enabled=False). "
+            "Skipping email/WhatsApp dispatch. Enable as a final setup step when ready."
+        )
+        return
+
     try:
         total_processed = 0
         for iteration in range(1, max_iterations + 1):
@@ -423,10 +437,10 @@ def apply_agent_flow(
 def manual_generate(
     user_id: str,
     job_id: int,
-    generate_model: str = "gemma-4-e2b-it",
-    generate_provider: str = "local",
-    generate_fallback_model: str = "models/gemini-3.5-flash-lite",
-    generate_fallback_provider: str = "gemini",
+    generate_model: str = "models/gemini-3.5-flash-lite",
+    generate_provider: str = "gemini",
+    generate_fallback_model: str = "gemma-4-e2b-it",
+    generate_fallback_provider: str = "local",
 ):
     """Trigger document generation for one specific job posting."""
     result = generate_application(

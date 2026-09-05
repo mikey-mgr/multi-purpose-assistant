@@ -97,8 +97,8 @@ def batch_compose_whatsapp(
         "whatsapp_notify_batch_v1",
         model=model,
         provider=provider,
-        fallback_model="models/gemini-3.5-flash-lite",
-        fallback_provider="gemini",
+        fallback_model="gemma-4-e2b-it",
+        fallback_provider="local",
         batch_input=batch_input_json,
     )
     content = result.get("content", "").strip()

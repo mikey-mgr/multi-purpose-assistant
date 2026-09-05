@@ -126,10 +126,10 @@ def _save_prep_with_retry(markdown: str, user_name: str, job_title: str) -> tupl
 def generate_interview_prep(
     user_id: str,
     job_id: int,
-    model: str = "gemma-4-e2b-it",
-    provider: str = "local",
-    fallback_model: str = "models/gemini-3.5-flash-lite",
-    fallback_provider: str = "gemini",
+    model: str = "models/gemini-3.5-flash-lite",
+    provider: str = "gemini",
+    fallback_model: str = "gemma-4-e2b-it",
+    fallback_provider: str = "local",
 ) -> dict:
     """
     Generate interview prep for a user + job.

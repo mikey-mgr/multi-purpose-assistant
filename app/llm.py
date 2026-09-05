@@ -1,6 +1,6 @@
 """
 LLM interaction layer.
-Routes through the local LiteRT-LM GPU server (primary) or Gemini (fallback).
+Routes through Gemini (primary) or the local LiteRT-LM GPU server (fallback).
 Both are OpenAI-compatible.
 """
 

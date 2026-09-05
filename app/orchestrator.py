@@ -49,10 +49,10 @@ def process_job_for_user(
     user_id: str,
     job_id: int | None = None,
     resume_id: str | None = None,
-    model: str = "gemma-4-e2b-it",
-    provider: str = "local",
-    fallback_model: str = "models/gemini-3.5-flash-lite",
-    fallback_provider: str = "gemini",
+    model: str = "models/gemini-3.5-flash-lite",
+    provider: str = "gemini",
+    fallback_model: str = "gemma-4-e2b-it",
+    fallback_provider: str = "local",
 ) -> list[GDocSchema]:
     """
     Full pipeline for one user + one job.
@@ -365,10 +365,10 @@ def _load_job_description(job_id: int | None, profile) -> str:
 def batch_process_applications(
     user_id: str,
     limit: int = 10,
-    model: str = "gemma-4-e2b-it",
-    provider: str = "local",
-    fallback_model: str = "models/gemini-3.5-flash-lite",
-    fallback_provider: str = "gemini",
+    model: str = "models/gemini-3.5-flash-lite",
+    provider: str = "gemini",
+    fallback_model: str = "gemma-4-e2b-it",
+    fallback_provider: str = "local",
 ) -> list[dict]:
     """
     Batch-apply for all generated-but-unapplied jobs using stored apply_details.

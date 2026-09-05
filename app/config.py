@@ -23,13 +23,13 @@ class Settings:
         "postgresql://postgres:@localhost:5432/ai_assistant",
     )
 
-    # ── LLM Provider (LiteRT-LM local GPU primary, Gemini fallback) ──
+    # ── LLM Provider (Gemini primary, LiteRT-LM local GPU fallback) ──
     GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY")
     LITERT_API_URL: str = os.getenv("LITERT_API_URL", "http://192.168.100.11:8055/v1")
     LITERT_API_KEY: str | None = os.getenv("LITERT_API_KEY")
 
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "local")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemma-4-e2b-it")
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gemini")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "models/gemini-3.5-flash-lite")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "1536"))
 
@@ -37,7 +37,9 @@ class Settings:
     SERPAPI_API_KEY: str | None = os.getenv("SERPAPI_API_KEY")
     TAVILY_API_KEY: str | None = os.getenv("TAVILY_API_KEY")
     EVOLUTION_API_URL: str = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
+    EVOLUTION_INSTANCE_NAME: str = os.getenv("EVOLUTION_INSTANCE_NAME", "Apex_Web_Services")
     WHATSAPP_API_KEY: str | None = os.getenv("WHATSAPP_API_KEY")
+    WHATSAPP_NUMBER: str = os.getenv("WHATSAPP_NUMBER", "263788667111@s.whatsapp.net")
 
     # ── Email (Gmail SMTP) ──────────────────────────────────────────
     GMAIL_ADDRESS: str | None = os.getenv("GMAIL_ADDRESS")

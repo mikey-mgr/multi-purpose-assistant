@@ -168,12 +168,20 @@ python scripts/seed_prompts.py
 
 Run `python prefect_flows/deployment.py` to serve all 6 deployments:
 
+By default, the system is in safe mode:
+- schedules are OFF
+- outbound email/WhatsApp sending is OFF
+
+Enable both only as the last setup step by setting:
+- `PREFECT_ENABLE_SCHEDULES=true`
+- `PREFECT_ENABLE_OUTBOUND=true`
+
 | Name | Schedule | Description |
 |------|----------|-------------|
-| `01-scraper` | `0 7-19/3 * * *` | Ingest listings from regional platforms. Pass `chain_next=True` to trigger 02→03→04. |
+| `01-scraper` | `0 7-19/3 * * *` when `PREFECT_ENABLE_SCHEDULES=true` | Ingest listings from regional platforms. Auto-chain 02→03→04 only when outbound is enabled. |
 | `02-matcher` | — | Batch-classify unscored jobs |
 | `03-generator` | — | Generate docs for matched jobs |
-| `04-apply-agent` | — | Batch-process generated matches: send emails + WhatsApp notifications |
+| `04-apply-agent` | — | Batch-process generated matches: sends emails + WhatsApp only when `outbound_enabled=true` |
 | `05-whatsapp-image-job` | — | Parse job image from Evolution API webhook → apply → notify |
 | `05b-whatsapp-text-job` | — | Parse job text from Evolution API webhook → apply → notify |
 | `06-check-referrals` | — | **#7** Cross-reference matches against contacts; sends WhatsApp referral alerts |
@@ -217,9 +225,18 @@ Set env vars for any other keys in the script (`SERPAPI_API_KEY`, `GMAIL_ADDRESS
 **Terminal 3 — Worker** (keep running):
 ```bash
 conda activate prefect_env
+export PREFECT_ENABLE_SCHEDULES=true
+export PREFECT_ENABLE_OUTBOUND=true
 python -m prefect_flows.deployment
 ```
 Registers all 6 deployments and starts an in-process runner.
+
+PowerShell equivalent:
+```powershell
+$env:PREFECT_ENABLE_SCHEDULES="true"
+$env:PREFECT_ENABLE_OUTBOUND="true"
+python -m prefect_flows.deployment
+```
 
 **Manual run** (any terminal):
 ```bash
@@ -338,8 +355,8 @@ Each stage targets a primary provider + model, with an automatic fallback:
 | Scenario | match_provider | match_model | generate_provider | generate_model |
 |----------|---------------|-------------|-------------------|----------------|
 | Default (matching) | `gemini` | `models/gemini-3.5-flash-lite` | `gemini` | `models/gemini-3.5-flash-lite` |
-| Default (apply) | `gemini` | `models/gemini-3.5-flash-lite` | `local` | `gemma-4-e2b-it` |
-| GPU fallback (apply) | `local` | `gemma-4-e2b-it` | `gemini` | `models/gemini-3.5-flash-lite` |
+| Default | `gemini` | `models/gemini-3.5-flash-lite` | `gemini` | `models/gemini-3.5-flash-lite` |
+| Local fallback | `local` | `gemma-4-e2b-it` | `local` | `gemma-4-e2b-it` |
 
 ## Source of Truth vs Generated Artifacts
 

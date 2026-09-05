@@ -14,6 +14,7 @@ Usage:
 
 from prefect import serve
 from prefect.client.schemas.schedules import CronSchedule
+import os
 
 from prefect_flows.job_pipeline import (
     scrape_and_store,
@@ -25,32 +26,55 @@ from prefect_flows.whatsapp_job_flow import process_whatsapp_job, process_whatsa
 from prefect_flows.relationship_flows import check_referrals_flow, daily_reminder_flow
 
 _DEFAULTS = {
-    "user_id": "ff0465b9-6512-4f47-8b5e-6f14a343a25d",
+    "user_id": os.getenv("PREFECT_USER_ID"),
     "match_model": "models/gemini-3.5-flash-lite",
     "match_fallback_model": "gemma-4-e2b-it",
-    "generate_model": "gemma-4-e2b-it",
-    "generate_fallback_model": "models/gemini-3.5-flash-lite",
+    "generate_model": "models/gemini-3.5-flash-lite",
+    "generate_fallback_model": "gemma-4-e2b-it",
     "match_provider": "gemini",
     "match_fallback_provider": "local",
-    "generate_provider": "local",
-    "generate_fallback_provider": "gemini",
+    "generate_provider": "gemini",
+    "generate_fallback_provider": "local",
     "match_limit": 15,  # 02-matcher limit
     "job_limit": 5,    # 03-generator limit
     "scrape_site_names": None,  # None = all sites
     "scrape_max_pages": {"vacancybox": 1, "iharare": 2, "vacancymail": 2},
-    "chain_next": True,  # auto-chain 01→02→03→04 on scheduled runs
+    "chain_next": False,  # auto-chain 01→02→03→04 on scheduled runs (opt-in)
+    "outbound_enabled": False,  # email/WhatsApp sending in 04-apply-agent (opt-in)
     "max_iterations": 3,  # loop each step to catch up on remaining jobs
 }
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+_SCHEDULES_ENABLED = _env_bool("PREFECT_ENABLE_SCHEDULES", False)
+_OUTBOUND_ENABLED = _env_bool("PREFECT_ENABLE_OUTBOUND", False)
+
+_DEFAULTS["chain_next"] = _OUTBOUND_ENABLED
+_DEFAULTS["outbound_enabled"] = _OUTBOUND_ENABLED
+
+
 def build():
+    if not _DEFAULTS["user_id"]:
+        raise RuntimeError("PREFECT_USER_ID must identify the imported candidate profile")
+
+    scraper_schedules = [CronSchedule(cron="0 7-19/3 * * *", timezone="Africa/Harare")] if _SCHEDULES_ENABLED else []
+
     serve(
         # 1. Standalone scrape — auto-chains 02→03→04 when scheduled
         scrape_and_store.to_deployment(
             name="01-scraper",
-            schedules=[CronSchedule(cron="0 7-19/3 * * *", timezone="Africa/Harare")],
+            schedules=scraper_schedules,
             tags=["production", "scraping"],
-            description="Scrape job boards every hour (7am-10pm). Auto-chains 02→03→04 on schedule. Run with --param chain_next=False to scrape only.",
+            description=(
+                "Scrape job boards every hour (7am-10pm). Auto-chains 02→03→04 only when PREFECT_ENABLE_OUTBOUND=true. "
+                "Schedule is disabled by default; enable with PREFECT_ENABLE_SCHEDULES=true."
+            ),
             parameters={
                 "site_names": _DEFAULTS["scrape_site_names"],
                 "max_pages": _DEFAULTS["scrape_max_pages"],
@@ -66,6 +90,7 @@ def build():
                 "match_limit": _DEFAULTS["match_limit"],
                 "job_limit": _DEFAULTS["job_limit"],
                 "chain_next": _DEFAULTS["chain_next"],
+                "outbound_enabled": _DEFAULTS["outbound_enabled"],
                 "max_iterations": _DEFAULTS["max_iterations"],
             },
         ),
@@ -103,12 +128,13 @@ def build():
         apply_agent_flow.to_deployment(
             name="04-apply-agent",
             tags=["production", "application"],
-            description="Parse apply_instructions for matched jobs and send email / WhatsApp.",
+            description="Parse apply_instructions for matched jobs and send email / WhatsApp when outbound_enabled=true.",
             parameters={
                 "user_id": _DEFAULTS["user_id"],
                 "generate_model": _DEFAULTS["generate_model"],
                 "generate_provider": _DEFAULTS["generate_provider"],
                 "limit": _DEFAULTS["job_limit"],
+                "outbound_enabled": _DEFAULTS["outbound_enabled"],
                 "max_iterations": _DEFAULTS["max_iterations"],
             },
         ),

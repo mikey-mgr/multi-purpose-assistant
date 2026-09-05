@@ -27,14 +27,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     environment:
       DB_CONN_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/ai_assistant
       OUTPUT_DIR: /app/data
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       LITERT_API_KEY: ${LITERT_API_KEY:-}
       LITERT_API_URL: ${LITERT_API_URL:-http://192.168.100.11:8055/v1}
-      LLM_PROVIDER: ${LLM_PROVIDER:-local}
-      LLM_MODEL: ${LLM_MODEL:-gemma-4-e2b-it}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      LLM_MODEL: ${LLM_MODEL:-models/gemini-3.5-flash-lite}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
     depends_on:
@@ -47,8 +48,75 @@ services:
     # This is a safe utility container. Pipeline stages run only when invoked.
     command: ["sleep", "infinity"]
 
+  prefect-server:
+    profiles: ["orchestration"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: prefect-runtime
+    restart: unless-stopped
+    command: ["prefect", "server", "start", "--host", "0.0.0.0"]
+    environment:
+      PREFECT_HOME: /app/prefect-data
+      PREFECT_UI_API_URL: http://127.0.0.1:4200/api
+    ports:
+      - "${PREFECT_PORT:-4200}:4200"
+    volumes:
+      - prefect_data:/app/prefect-data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health', timeout=5)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  prefect-runner:
+    profiles: ["orchestration"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: prefect-runtime
+    restart: unless-stopped
+    environment:
+      DB_CONN_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/ai_assistant
+      OUTPUT_DIR: /app/data
+      PREFECT_API_URL: http://prefect-server:4200/api
+      PREFECT_USER_ID: ${PREFECT_USER_ID:-}
+      PREFECT_ENABLE_SCHEDULES: ${PREFECT_ENABLE_SCHEDULES:-false}
+      PREFECT_ENABLE_OUTBOUND: ${PREFECT_ENABLE_OUTBOUND:-false}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LITERT_API_KEY: ${LITERT_API_KEY:-}
+      LITERT_API_URL: ${LITERT_API_URL:-http://192.168.100.11:8055/v1}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      LLM_MODEL: ${LLM_MODEL:-models/gemini-3.5-flash-lite}
+      SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      GMAIL_ADDRESS: ${GMAIL_ADDRESS:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://host.docker.internal:8080}
+      EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-Apex_Web_Services}
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-}
+      WHATSAPP_NUMBER: ${WHATSAPP_NUMBER:-263788667111@s.whatsapp.net}
+    depends_on:
+      db:
+        condition: service_healthy
+      prefect-server:
+        condition: service_healthy
+    volumes:
+      - application_data:/app/data
+      - ./app:/app/app:ro
+      - ./core:/app/core:ro
+      - ./prefect_flows:/app/prefect_flows:ro
+      - ./scrapers:/app/scrapers:ro
+      - ./profiles:/app/profiles:ro
+      - ./documents:/app/documents:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
 volumes:
   postgres_data:
     name: multipurpose-assistant-postgres-data
   application_data:
     name: multipurpose-assistant-application-data
+  prefect_data:
+    name: multipurpose-assistant-prefect-data

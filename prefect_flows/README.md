@@ -27,7 +27,7 @@ the pinned versions. Install packages individually.
 | Terminal | Command | Purpose |
 |----------|---------|---------|
 | 1 | `prefect server start` | API server + UI at :4200 |
-| 2 | `python -m prefect_flows.deployment` | Registers **5 deployments** + runs scheduler |
+| 2 | `python -m prefect_flows.deployment` | Registers deployments; scheduler only runs when enabled |
 | 3 | Free | Manual triggers |
 
 If you stop Terminal 1 or 2, restart them in order (server first).
@@ -48,8 +48,23 @@ prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api
 python -m prefect_flows.setup_blocks
 
 # Terminal 2 continues with:
+export PREFECT_ENABLE_SCHEDULES=true
+export PREFECT_ENABLE_OUTBOUND=true
 python -m prefect_flows.deployment
 ```
+
+PowerShell equivalent:
+
+```powershell
+$env:PREFECT_ENABLE_SCHEDULES="true"
+$env:PREFECT_ENABLE_OUTBOUND="true"
+python -m prefect_flows.deployment
+```
+
+Default behavior when flags are not set:
+- no cron schedule is attached to `01-scraper`
+- `04-apply-agent` skips outbound email/WhatsApp dispatch
+- pipeline chaining is disabled by default
 
 ## Creating / updating secrets
 
@@ -104,13 +119,13 @@ Visit http://localhost:4200/deployments after starting `deployment.py`:
 {
   "user_id": "ff0465b9-...",
   "match_model": "models/gemini-3.5-flash-lite",
-  "generate_model": "gemma-4-e2b-it",
+  "generate_model": "models/gemini-3.5-flash-lite",
   "match_provider": "gemini",
-  "generate_provider": "local",
+  "generate_provider": "gemini",
   "match_fallback_model": "gemma-4-e2b-it",
   "match_fallback_provider": "local",
-  "generate_fallback_model": "models/gemini-3.5-flash-lite",
-  "generate_fallback_provider": "gemini",
+  "generate_fallback_model": "gemma-4-e2b-it",
+  "generate_fallback_provider": "local",
   "match_limit": 50,
   "job_limit": 10
 }

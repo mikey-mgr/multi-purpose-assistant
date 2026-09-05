@@ -1,8 +1,10 @@
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=5
 
 WORKDIR /app
 
@@ -24,10 +26,18 @@ RUN python -m pip install --upgrade pip \
 
 COPY . .
 
-RUN mkdir -p /app/data \
+RUN mkdir -p /app/data /app/prefect-data \
     && useradd --create-home --uid 10001 appuser \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app /app/prefect-data
 
 USER appuser
 
 CMD ["python", "-c", "print('Application image ready. Run a specific command with docker compose run.')"]
+
+FROM runtime AS prefect-runtime
+
+USER root
+RUN python -m pip install "prefect>=3.7,<4"
+USER appuser
+
+CMD ["python", "-m", "prefect_flows.deployment"]

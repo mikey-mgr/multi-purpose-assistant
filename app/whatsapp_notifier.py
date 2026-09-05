@@ -14,11 +14,13 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_WHATSAPP_URL = "http://localhost:8080/message/sendText/Apex_Web_Services"
-_MEDIA_URL = "http://localhost:8080/message/sendMedia/Apex_Web_Services"
-_PRESENCE_URL = "http://localhost:8080/chat/sendPresence/Apex_Web_Services"
+_EVOLUTION_BASE_URL = settings.EVOLUTION_API_URL.rstrip("/")
+_INSTANCE_NAME = settings.EVOLUTION_INSTANCE_NAME
+_WHATSAPP_URL = f"{_EVOLUTION_BASE_URL}/message/sendText/{_INSTANCE_NAME}"
+_MEDIA_URL = f"{_EVOLUTION_BASE_URL}/message/sendMedia/{_INSTANCE_NAME}"
+_PRESENCE_URL = f"{_EVOLUTION_BASE_URL}/chat/sendPresence/{_INSTANCE_NAME}"
 _WHATSAPP_API_KEY = settings.WHATSAPP_API_KEY
-_WHATSAPP_NUMBER = "263788667111@s.whatsapp.net"
+_WHATSAPP_NUMBER = settings.WHATSAPP_NUMBER
 
 def send_flow_error_notification(flow_name: str, error: str) -> bool:
     """

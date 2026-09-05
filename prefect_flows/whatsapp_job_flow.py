@@ -283,10 +283,10 @@ def _classify_intent(text: str, run_logger=None) -> str:
     try:
         result = generate_text_with_fallback(
             prompt_name="whatsapp_text_router_v1",
-            model="gemma-4-e2b-it",
-            provider="local",
-            fallback_model="models/gemini-3.5-flash-lite",
-            fallback_provider="gemini",
+            model="models/gemini-3.5-flash-lite",
+            provider="gemini",
+            fallback_model="gemma-4-e2b-it",
+            fallback_provider="local",
             user_message=text,
         )
         raw = (result.get("content") or "").strip()
@@ -375,10 +375,10 @@ def process_whatsapp_job(
             user_text=f"USER PROFILE:\n{profile_json}",
             image_base64=image_base64,
             mimetype=mimetype,
-            model=generate_model or "gemma-4-e2b-it",
-            provider="local",
-            fallback_model=generate_fallback_model or "models/gemini-3.5-flash-lite",
-            fallback_provider="gemini",
+            model=generate_model or "models/gemini-3.5-flash-lite",
+            provider=generate_provider or "gemini",
+            fallback_model=generate_fallback_model or "gemma-4-e2b-it",
+            fallback_provider=generate_fallback_provider or "local",
             max_tokens=12000,
             temperature=0.7,
         )
@@ -1023,10 +1023,10 @@ def process_whatsapp_text(
             result = generate_interview_prep(
                 user_id=uid,
                 job_id=job_id,
-                model=generate_model or "gemma-4-e2b-it",
-                provider=generate_provider or "local",
-                fallback_model=generate_fallback_model or "models/gemini-3.5-flash-lite",
-                fallback_provider=generate_fallback_provider or "gemini",
+                model=generate_model or "models/gemini-3.5-flash-lite",
+                provider=generate_provider or "gemini",
+                fallback_model=generate_fallback_model or "gemma-4-e2b-it",
+                fallback_provider=generate_fallback_provider or "local",
             )
             whatsapp_text = result.get("whatsapp_text", "") or f"Prep ready for {result.get('company','')} — Job #{job_id}"
             docx_path = result.get("docx_path")
@@ -1056,10 +1056,10 @@ def process_whatsapp_text(
             formatted = _format_matches_for_llm(matches)
             result = generate_text_with_fallback(
                 prompt_name="whatsapp_data_query_v1",
-                model="gemma-4-e2b-it",
-                provider="local",
-                fallback_model="models/gemini-3.5-flash-lite",
-                fallback_provider="gemini",
+                model="models/gemini-3.5-flash-lite",
+                provider="gemini",
+                fallback_model="gemma-4-e2b-it",
+                fallback_provider="local",
                 user_question=text,
                 query_results=formatted,
             )
