@@ -94,6 +94,7 @@ class DocumentInput(StrictModel):
 class ResumeInput(StrictModel):
     version_name: str = Field(min_length=1)
     professional_summary: str = Field(min_length=1)
+    additional_information: dict[str, str] = Field(default_factory=dict)
     is_active: bool = True
     work_experience: list[ExperienceInput] = Field(default_factory=list)
     projects: list[ProjectInput] = Field(default_factory=list)
@@ -178,6 +179,7 @@ def import_candidate_profile(profile: CandidateProfileInput) -> tuple[str, str]:
                 user_id=user.id,
                 version_name=profile.resume.version_name,
                 professional_summary=profile.resume.professional_summary,
+                additional_information=profile.resume.additional_information,
                 is_active=profile.resume.is_active,
             )
             session.add(resume)

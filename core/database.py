@@ -10,7 +10,7 @@ from sqlalchemy import (
     ARRAY, ForeignKey, text, Index, select, Numeric, func, and_,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID, TSVECTOR
+from sqlalchemy.dialects.postgresql import UUID, TSVECTOR, JSONB
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from pgvector.sqlalchemy import Vector
 
@@ -55,6 +55,7 @@ class Resume(Base):
     user_id             = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     version_name        = Column(String(100), nullable=False)
     professional_summary = Column(Text, nullable=False)
+    additional_information = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     summary_embedding   = Column(Vector(1536))
     is_active           = Column(Boolean, default=False)
     created_at          = Column(DateTime(timezone=True), server_default=text("timezone('Africa/Harare', CURRENT_TIMESTAMP)"))

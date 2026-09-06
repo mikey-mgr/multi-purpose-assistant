@@ -174,6 +174,7 @@ def _fetch_raw_profile_data(user_id, resume_id=None):
                 "id": resume.id,
                 "version_name": resume.version_name,
                 "professional_summary": resume.professional_summary,
+                "additional_information": resume.additional_information or {},
             },
             "experiences": [
                 {

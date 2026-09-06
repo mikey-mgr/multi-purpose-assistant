@@ -1,0 +1,13 @@
+# edit candidate_profile
+docker compose --profile tools build app
+docker compose --profile tools run --rm app python scripts/import_candidate_profile.py profiles/candidate_profile.yaml --apply
+
+# print test cv template
+docker compose --profile tools run --rm app python scripts/render_test_cv.py --email munikwataona09@gmail.com --job-title "Layout Test"
+
+# take down all images
+docker compose --profile tools --profile orchestration down --rmi all --remove-orphans;
+
+# build & start up all docker images
+docker compose --profile tools --profile orchestration build --no-cache;
+docker compose --profile tools --profile orchestration up -d --force-recreate --remove-orphans

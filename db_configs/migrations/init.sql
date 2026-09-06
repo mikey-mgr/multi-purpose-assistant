@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS resumes (
     user_id             UUID REFERENCES users(id) ON DELETE CASCADE,
     version_name        VARCHAR(100) NOT NULL,
     professional_summary TEXT NOT NULL,
+    additional_information JSONB NOT NULL DEFAULT '{}'::jsonb,
     summary_embedding   vector(1536),
     is_active           BOOLEAN DEFAULT false,
     created_at          TIMESTAMP WITH TIME ZONE DEFAULT timezone('Africa/Harare', CURRENT_TIMESTAMP),

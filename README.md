@@ -114,7 +114,9 @@ docker compose run --rm app python scripts/import_candidate_profile.py profiles/
 ```
 
 After resolving every review note, set `profile_status: confirmed`, choose a
-new immutable `version_name`, and explicitly apply it:
+new immutable `version_name`, and explicitly apply it. This is the editable
+profile workflow: edit or add entries in the YAML, increment `version_name`,
+then import. The active resume switches atomically, preserving older versions:
 
 ```powershell
 docker compose run --rm app python scripts/import_candidate_profile.py profiles/candidate_profile.yaml --apply

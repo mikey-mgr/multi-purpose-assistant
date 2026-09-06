@@ -114,12 +114,13 @@ Before writing anything, analyze the job description to extract a strategy:
    e. Vary sentence lengths: ~30% short, ~50% medium, ~20% long
    f. Do NOT describe the job's requirements impersonally ("This role demands...", "Proficiency with X is essential")
    g. Do NOT list every JD requirement as a skill you have - rather the most crucial ones and maybe a few nice to haves required if it isnt too long.
+   h. If the profile shows that the candidate has recently completed or is completing their degree, describe them accurately as a recent graduate or early-career candidate. Frame limited formal work experience through their verified internship, projects, and transferable skills; never imply seniority they do not have.
 
 2. EXPERIENCE BULLETS  -  Rewrite source bullets into concise evidence-led bullets using action + task + outcome or scope. Quantify only when the user's profile supplies the number; never invent metrics, scale, tools, responsibilities, or outcomes. ONLY use evidence from the user's `work_experience` array  -  do NOT import or adapt facts from `projects`, `education`, or `certifications`. For a missing JD skill, describe the closest verified transferable evidence without claiming use of the missing skill.
 
 3. SKILLS - Prioritise the most relevant skill categories for this specific job (max 4 categories, ordered by relevance). Include only skills supported by the user's profile, with max 5 skills per category. Never copy an unsupported skill from the JD into the resume.
 
-4. PROJECT BULLETS  -  Select max 3/4 projects (the most relevant to the role) and rewrite their bullet points to emphasise relevance to the target role. Discard the rest. These must ONLY appear in the `project_highlights` section, NEVER in the work experience section.
+4. PROJECT BULLETS  -  Select max 4 projects (the most relevant to the role) and rewrite their bullet points to emphasise relevance to the target role. Discard the rest. These must ONLY appear in the `project_highlights` section, NEVER in the work experience section.
 
 5. SECTION BOUNDARIES  -  Each resume section must ONLY use data from its corresponding profile section. Work experience uses `work_experience`. Projects use `projects`. Education uses `education`. Certifications use `certifications`. Do not mix data between sections.
 
@@ -269,6 +270,7 @@ Before writing anything, analyze the job description to extract a strategy:
    e. Vary sentence lengths: ~30% short, ~50% medium, ~20% long
    f. Do NOT describe the job's requirements impersonally ("This role demands...", "Proficiency with X is essential")
    g. Do NOT list every JD requirement as a skill you have - rather the most crucial ones and maybe a few nice to haves required if it isnt too long.
+   h. If the profile shows that the candidate has recently completed or is completing their degree, describe them accurately as a recent graduate or early-career candidate. Frame limited formal work experience through their verified internship, projects, and transferable skills; never imply seniority they do not have.
 
 2. EXPERIENCE BULLETS  -  Rewrite source bullets into concise evidence-led bullets using action + task + outcome or scope. Quantify only when the user's profile supplies the number; never invent metrics, scale, tools, responsibilities, or outcomes. ONLY use evidence from the user's `work_experience` array  -  do NOT import or adapt facts from `projects`, `education`, or `certifications`. For a missing JD skill, describe the closest verified transferable evidence without claiming use of the missing skill.
 
@@ -455,6 +457,7 @@ Before writing anything, analyze the job description to extract a strategy:
    e. Vary sentence lengths: ~30% short, ~50% medium, ~20% long
    f. Do NOT describe the job's requirements impersonally ("This role demands...", "Proficiency with X is essential")
    g. Do NOT list every JD requirement as a skill you have - rather the most crucial ones and maybe a few nice to haves required if it isnt too long.
+   h. If the profile shows that the candidate has recently completed or is completing their degree, describe them accurately as a recent graduate or early-career candidate. Frame limited formal work experience through their verified internship, projects, and transferable skills; never imply seniority they do not have.
 
 2. EXPERIENCE BULLETS  -  Rewrite source bullets into concise evidence-led bullets using action + task + outcome or scope. Quantify only when the user's profile supplies the number; never invent metrics, scale, tools, responsibilities, or outcomes. ONLY use evidence from the user's `work_experience` array  -  do NOT import or adapt facts from `projects`, `education`, or `certifications`. For a missing JD skill, describe the closest verified transferable evidence without claiming use of the missing skill.
 

@@ -80,13 +80,13 @@ def _fmt_date(d: str | None) -> str | None:
     return d
 
 
-def _github_username(projects: list[dict]) -> str | None:
-    """Return the first GitHub username present in the candidate's projects."""
+def _github_profile_url(projects: list[dict]) -> str | None:
+    """Return the first GitHub profile URL present in the candidate's projects."""
     for project in projects:
         url = str(project.get("project_url") or "")
         match = re.match(r"https?://(?:www\.)?github\.com/([^/]+)", url, re.IGNORECASE)
         if match:
-            return match.group(1)
+            return f"https://github.com/{match.group(1)}"
     return None
 
 
@@ -122,12 +122,26 @@ def build_yaml_dict(
     location = ", ".join(
         filter(None, [user.get('location_city'), user.get('location_country')])
     )
-    social = []
+    additional_information = resume.get("additional_information") or {}
+    custom_connections = []
     if user.get('linkedin_url'):
-        social.append({"network": "LinkedIn", "username": user['linkedin_url']})
-    github_username = _github_username(projects)
-    if github_username:
-        social.append({"network": "GitHub", "username": github_username})
+        custom_connections.append({
+            "fontawesome_icon": "linkedin",
+            "placeholder": "LinkedIn",
+            "url": user["linkedin_url"],
+        })
+    if github_profile_url := _github_profile_url(projects):
+        custom_connections.append({
+            "fontawesome_icon": "github",
+            "placeholder": "GitHub",
+            "url": github_profile_url,
+        })
+    if portfolio_url := additional_information.get("portfolio_url"):
+        custom_connections.append({
+            "fontawesome_icon": "link",
+            "placeholder": "Portfolio",
+            "url": portfolio_url,
+        })
 
     cv: dict[str, Any] = {
         "cv": {
@@ -138,7 +152,7 @@ def build_yaml_dict(
             "headline": resume.get("headline") or os.getenv(
                 "CV_HEADLINE", "Software Developer  ·  DevOps Enthusiast"
             ),
-            "social_networks": social or None,
+            "custom_connections": custom_connections or None,
         }
     }
 
@@ -242,7 +256,7 @@ def build_yaml_dict(
                 "highlights": _coerce_strings(highlights) or None,
             }
             if purl:
-                entry["name"] = f"[{pname} (Click to view)]({purl})"
+                entry["name"] = f"[{pname} (GitHub)]({purl})"
             proj_list.append(entry)
     else:
         # No LLM override — include up to 2 most recent projects by ID
@@ -306,6 +320,19 @@ def build_yaml_dict(
         sections["PROJECTS"] = projects_section
     if skills_section:
         sections["TECHNICAL SKILLS"] = skills_section
+    additional_information_section = []
+    portfolio_url = additional_information.get("portfolio_url")
+    if portfolio_url:
+        portfolio_label = additional_information.get("portfolio_label") or portfolio_url.removeprefix("https://").removeprefix("http://")
+        additional_information_section.append(
+            f"**Portfolio:** [{portfolio_label}]({portfolio_url})"
+        )
+    if availability := additional_information.get("availability"):
+        additional_information_section.append(f"**Availability:** {availability}")
+    if references_note := additional_information.get("references"):
+        additional_information_section.append(f"**References:** {references_note}")
+    if additional_information_section:
+        sections["ADDITIONAL INFORMATION"] = additional_information_section
     if certifications_section:
         sections["CERTIFICATIONS"] = certifications_section
     if references_section:
@@ -336,11 +363,11 @@ def build_yaml_dict(
             "alignment": "left",
             "font_family": "Arial",
             "font_size": {
-                "body": "9.5pt",
+                "body": "10.5pt",
                 "name": "25pt",
-                "headline": "10pt",
-                "connections": "8.5pt",
-                "section_titles": "10.5pt",
+                "headline": "11pt",
+                "connections": "9.5pt",
+                "section_titles": "12pt",
             },
             "small_caps": {"section_titles": False},
             "bold": {
@@ -401,15 +428,30 @@ def build_yaml_dict(
 
 
 def _group_skills(skills: list[dict]) -> list[dict]:
-    """Group skills by skill_type into label/details pairs."""
+    """Group skills into stable, readable CV rows."""
     from collections import defaultdict
+
+    categories = (
+        ("Languages", {"Language"}),
+        ("Frameworks & Libraries", {"Framework", "ML/AI"}),
+        ("DevOps & Tools", {"DevOps", "Tool"}),
+        ("Databases", {"Database"}),
+        ("Concepts", {"Concept"}),
+    )
     groups = defaultdict(list)
     for s in skills:
         groups[s.get("skill_type", "Other")].append(s["skill_name"])
-    return [
-        {"label": label, "details": ", ".join(items)}
-        for label, items in groups.items()
-    ]
+    rows = []
+    consumed = set()
+    for label, types in categories:
+        items = [skill for skill_type in types for skill in groups[skill_type]]
+        consumed.update(types)
+        if items:
+            rows.append({"label": label, "details": ", ".join(items)})
+    for label, items in groups.items():
+        if label not in consumed and items:
+            rows.append({"label": label, "details": ", ".join(items)})
+    return rows
 
 
 def _sanitize_dict(obj: Any) -> Any:
@@ -441,11 +483,15 @@ def render(
     """
     Write YAML, call ``rendercv render``, return path to generated PDF.
 
-    The PDF lands in ``data/rendercv_output/Name Surname CV - Job Title.pdf``.
+    The PDF lands in ``RENDERCV_OUTPUT_DIR`` when configured, otherwise in
+    ``data/rendercv_output/Name Surname CV - Job Title.pdf``.
     If a file with that name exists, a counter is appended before the extension.
     """
     if output_dir is None:
-        output_dir = os.path.join(settings.OUTPUT_DIR, "rendercv_output")
+        output_dir = os.getenv(
+            "RENDERCV_OUTPUT_DIR",
+            os.path.join(settings.OUTPUT_DIR, "rendercv_output"),
+        )
     os.makedirs(output_dir, exist_ok=True)
 
     cv_dict = _sanitize_dict(cv_dict)
