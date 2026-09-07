@@ -12,3 +12,4 @@ merged/
 profiles/candidate_profile.yaml
 profiles/*.private.yaml
 documents/*
+backups/*

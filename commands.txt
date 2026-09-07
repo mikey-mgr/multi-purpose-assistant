@@ -1,13 +1,142 @@
-# edit candidate_profile
+MULTIPURPOSE ASSISTANT - WINDOWS / DOCKER COMMANDS
+Run every command from the repository root in PowerShell.
+
+PREREQUISITES ON A NEW LAPTOP
+-----------------------------
+# Install Docker Desktop, start it, then confirm Docker and Compose are available.
+docker --version
+docker compose version
+
+# Validate the Compose configuration before building or starting anything.
+docker compose config --quiet
+
+# Create folders intentionally excluded from Git.
+New-Item -ItemType Directory -Force profiles, documents, data, backups
+
+# Copy your private files from the old laptop/backup into this repository:
+#   .env                         API keys and local configuration (never commit)
+#   profiles/candidate_profile.yaml
+#   documents/                   Certificates, ID documents, etc.
+#   backups/                     Optional Docker-volume backups, described below
+
+
+FIRST-TIME SETUP
+----------------
+# Build all images and start the database, utility app, Prefect, and webhook.
+docker compose --profile tools --profile orchestration up -d --build
+
+# Check service state. DB, Prefect server, and webhook should become healthy.
+docker compose --profile tools --profile orchestration ps
+
+# Open Prefect and test the HTTP endpoints.
+Start-Process http://localhost:4200
+Invoke-WebRequest http://localhost:4200/api/health
+Invoke-WebRequest http://localhost:8055/health
+
+# Apply the CV additional-information migration. Safe to run again.
+docker compose exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d ai_assistant -f /opt/app/migrations/20260906_add_resume_additional_information.sql
+
+
+NORMAL DAILY COMMANDS
+---------------------
+# Start the complete stack after Docker Desktop or the computer was restarted.
+docker compose --profile tools --profile orchestration up -d
+
+# Inspect containers and follow logs. Ctrl+C stops viewing logs only.
+docker compose --profile tools --profile orchestration ps
+docker compose --profile tools --profile orchestration logs -f
+docker compose --profile orchestration logs -f prefect-server prefect-runner
+docker compose --profile orchestration logs -f webhook-server
+
+# Stop containers but KEEP database, app-data, and Prefect volumes.
+docker compose --profile tools --profile orchestration down
+
+# Recreate only services whose environment/configuration changed.
+docker compose --profile orchestration up -d --force-recreate prefect-runner webhook-server
+
+
+BUILD / REBUILD
+---------------
+# Rebuild all images after changing Dockerfile, requirements, or application source.
+docker compose --profile tools --profile orchestration build
+docker compose --profile tools --profile orchestration up -d --force-recreate
+
+# Rebuild only the utility app image after changing scripts used by `compose run`.
+docker compose --profile tools build app
+
+# Full clean image rebuild while preserving ALL named volumes and their data.
+docker compose --profile tools --profile orchestration down --rmi all --remove-orphans
+docker compose --profile tools --profile orchestration build --no-cache
+docker compose --profile tools --profile orchestration up -d --force-recreate --remove-orphans
+
+# DANGER: deletes the database, application-data, and Prefect-data volumes.
+# Use only when intentionally starting with empty data.
+docker compose --profile tools --profile orchestration down -v --remove-orphans
+
+
+CANDIDATE PROFILE / CV
+----------------------
+# Validate candidate_profile.yaml only. This makes NO database changes.
+docker compose --profile tools run --rm app python scripts/import_candidate_profile.py profiles/candidate_profile.yaml
+
+# Apply a profile revision. Edit the YAML, set profile_status: confirmed, and
+# change resume.version_name (for example canonical-v3). This activates a new,
+# immutable resume version while preserving earlier versions.
 docker compose --profile tools build app
 docker compose --profile tools run --rm app python scripts/import_candidate_profile.py profiles/candidate_profile.yaml --apply
 
-# print test cv template
+# Render the active profile as a test CV without calling an AI model.
 docker compose --profile tools run --rm app python scripts/render_test_cv.py --email munikwataona09@gmail.com --job-title "Layout Test"
 
-# take down all images
-docker compose --profile tools --profile orchestration down --rmi all --remove-orphans;
+# List CVs in the persistent Docker volume.
+docker compose exec app ls -lah /app/data/rendercv_output
 
-# build & start up all docker images
-docker compose --profile tools --profile orchestration build --no-cache;
-docker compose --profile tools --profile orchestration up -d --force-recreate --remove-orphans
+# Copy all generated CVs into the local project folder. The app service must run.
+New-Item -ItemType Directory -Force data\rendercv_output
+docker compose cp app:/app/data/rendercv_output data\rendercv_output
+
+
+PROMPTS AND PREFECT
+-------------------
+# Upsert prompt definitions from scripts/seed_prompts.py into PostgreSQL.
+# Review the script first: it updates live prompt records.
+docker compose --profile tools run --rm app python scripts/seed_prompts.py
+
+# List Prefect deployments and trigger one manually.
+docker compose exec prefect-runner prefect deployment ls
+docker compose exec prefect-runner prefect deployment run "scrape-and-store/01-scraper"
+
+
+DATABASE / DIAGNOSTICS
+----------------------
+# Open PostgreSQL interactively. Exit with \q.
+docker compose exec db psql -U postgres -d ai_assistant
+
+# Show active and historic resume versions.
+docker compose exec -T db psql -U postgres -d ai_assistant -c "SELECT version_name, is_active, created_at FROM resumes ORDER BY created_at DESC;"
+
+# Check database health and recent service logs.
+docker compose exec -T db pg_isready -U postgres -d ai_assistant
+docker compose logs --tail 100 prefect-server
+docker compose logs --tail 100 prefect-runner
+docker compose logs --tail 100 webhook-server
+
+
+MOVING TO A NEW LAPTOP - BACK UP DOCKER DATA
+--------------------------------------------
+# Run on the OLD laptop. The archives contain the persistent Docker volumes.
+New-Item -ItemType Directory -Force backups
+docker run --rm -v multipurpose-assistant-postgres-data:/source -v "${PWD}\backups:/backup" alpine tar czf /backup/postgres-data.tgz -C /source .
+docker run --rm -v multipurpose-assistant-application-data:/source -v "${PWD}\backups:/backup" alpine tar czf /backup/application-data.tgz -C /source .
+docker run --rm -v multipurpose-assistant-prefect-data:/source -v "${PWD}\backups:/backup" alpine tar czf /backup/prefect-data.tgz -C /source .
+
+# On the NEW laptop, copy the repository plus private files and backups first.
+# Start once to create empty named volumes, stop, then restore into that fresh setup.
+docker compose --profile tools --profile orchestration up -d
+docker compose --profile tools --profile orchestration down
+docker run --rm -v multipurpose-assistant-postgres-data:/target -v "${PWD}\backups:/backup" alpine tar xzf /backup/postgres-data.tgz -C /target
+docker run --rm -v multipurpose-assistant-application-data:/target -v "${PWD}\backups:/backup" alpine tar xzf /backup/application-data.tgz -C /target
+docker run --rm -v multipurpose-assistant-prefect-data:/target -v "${PWD}\backups:/backup" alpine tar xzf /backup/prefect-data.tgz -C /target
+docker compose --profile tools --profile orchestration up -d
+
+# Restore only into fresh/empty volumes. Back up existing destination data first.
