@@ -38,7 +38,7 @@ _DEFAULTS = {
     "match_limit": 15,  # 02-matcher limit
     "job_limit": 5,  # 03-generator limit
     "scrape_site_names": None,  # None = all sites
-    "scrape_max_pages": {"vacancybox": 1, "iharare": 2, "vacancymail": 2},
+    "scrape_max_pages": {"vacancybox": 1, "iharare": 2, "vacancymail": 2, "applynow": 1},
     "chain_next": False,  # auto-chain 01→02→03→04 on scheduled runs (opt-in)
     "outbound_enabled": False,  # email/WhatsApp sending in 04-apply-agent (opt-in)
     "max_iterations": 3,  # loop each step to catch up on remaining jobs

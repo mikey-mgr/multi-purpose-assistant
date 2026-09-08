@@ -19,6 +19,7 @@ from scrapers.utils import SiteScrapeError
 from scrapers.vacancymail_scraper import VacancyMailScraper
 from scrapers.iharare_scraper import IHarareJobsScraper
 from scrapers.vacancybox_scraper import VacancyBoxScraper
+from scrapers.applynow_scraper import ApplyNowScraper
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class UnifiedJobScraper:
             'vacancymail': VacancyMailScraper(),
             'iharare': IHarareJobsScraper(),
             'vacancybox': VacancyBoxScraper(),
+            'applynow': ApplyNowScraper(),
         }
 
     def scrape_jobs(self, site_name: Union[str, List[str]] = None, results_wanted: int = 50,

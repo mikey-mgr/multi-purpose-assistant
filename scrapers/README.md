@@ -10,6 +10,7 @@ Modular data ingestion modules for structured extraction from regional employmen
 | `iharare_scraper` | `IHarareJobsScraper` | ihararejobs.com | `python -m scrapers.iharare_scraper` |
 | `vacancybox_scraper` | `VacancyBoxScraper` | vacancybox.co.zw | `python -m scrapers.vacancybox_scraper` |
 | `vacancymail_scraper` | `VacancyMailScraper` | vacancymail.co.zw | `python -m scrapers.vacancymail_scraper` |
+| `applynow_scraper` | `ApplyNowScraper` | ApplyNow Zimbabwe + Remote | `python -m scrapers.applynow_scraper` |
 
 ## CLI Usage
 
@@ -20,6 +21,7 @@ Each module runs a self-test when executed directly. All scrapers accept the sam
 python -m scrapers.iharare_scraper
 python -m scrapers.vacancybox_scraper
 python -m scrapers.vacancymail_scraper
+python -m scrapers.applynow_scraper
 
 # Run the unified scraper (all 3 sites, 2 jobs each)
 python -m scrapers.unified_scraper
@@ -83,7 +85,7 @@ All modules produce a standardized list of dicts with these fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `site` | str | Source site key (`iharare`, `vacancybox`, `vacancymail`) |
+| `site` | str | Source site key (`iharare`, `vacancybox`, `vacancymail`, `applynow`) |
 | `title` | str/None | Job title |
 | `company` | str/None | Employer name |
 | `job_url` | str/None | Full URL to the job listing |
@@ -113,6 +115,11 @@ All modules produce a standardized list of dicts with these fields:
 - Extracts: title, company, location, job type, salary, category, dates, description.
 - Only scraper that provides `compensation` (salary) data.
 - Parses relative posted times ("Posted 3 days ago") into absolute dates.
+
+### ApplyNow (`applynow_scraper.py`)
+- Uses ApplyNow's public WordPress REST API for the Zimbabwe and Remote feeds.
+- Cross-listed posts are deduplicated by canonical URL and remote listings populate `remote`.
+- Includes jobs and internships; excludes scholarships, grants, fellowships, courses, and contests.
 
 ## Output & Persistence
 

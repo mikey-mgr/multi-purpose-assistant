@@ -46,7 +46,7 @@ def scrape_jobs_task(
     import pandas as pd  # noqa: F401 — keep for type hint
 
     run_logger = get_run_logger()
-    site_names = site_names or ["iharare", "vacancybox", "vacancymail"]
+    site_names = site_names or ["iharare", "vacancybox", "vacancymail", "applynow"]
     run_logger.info("Scraping job boards %s (max_pages=%s) ...", site_names, max_pages)
     scraper = UnifiedJobScraper()
     kwargs = {"max_pages": max_pages} if max_pages else {}

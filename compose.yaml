@@ -58,6 +58,8 @@ services:
     restart: unless-stopped
     command: ["prefect", "server", "start", "--host", "0.0.0.0"]
     environment:
+      # SQLite is not reliable with concurrent Prefect API and service writes.
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/prefect
       PREFECT_HOME: /app/prefect-data
       PREFECT_UI_API_URL: http://127.0.0.1:4200/api
       # Prefect runs as appuser, so UI assets must be prepared in a writable path.
