@@ -16,6 +16,10 @@ from prefect import serve
 from prefect.client.schemas.schedules import CronSchedule
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv(override=False)  # honor .env (PREFECT_USER_ID etc.) like app.config does
+
 from prefect_flows.job_pipeline import (
     scrape_and_store,
     match_jobs_flow,
@@ -39,8 +43,8 @@ _DEFAULTS = {
     "job_limit": 5,  # 03-generator limit
     "scrape_site_names": None,  # None = all sites
     "scrape_max_pages": {"vacancybox": 1, "iharare": 2, "vacancymail": 2, "applynow": 1},
-    "chain_next": False,  # auto-chain 01→02→03→04 on scheduled runs (opt-in)
-    "outbound_enabled": False,  # email/WhatsApp sending in 04-apply-agent (opt-in)
+    "chain_next": False,  # auto-chain 01→02→03→04 only when scheduler triggers it
+    "outbound_enabled": True,  # email/WhatsApp sending in 04-apply-agent (on by default)
     "max_iterations": 3,  # loop each step to catch up on remaining jobs
 }
 
@@ -53,9 +57,9 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 _SCHEDULES_ENABLED = _env_bool("PREFECT_ENABLE_SCHEDULES", False)
-_OUTBOUND_ENABLED = _env_bool("PREFECT_ENABLE_OUTBOUND", False)
+_OUTBOUND_ENABLED = _env_bool("PREFECT_ENABLE_OUTBOUND", True)
 
-_DEFAULTS["chain_next"] = _OUTBOUND_ENABLED
+_DEFAULTS["chain_next"] = _SCHEDULES_ENABLED
 _DEFAULTS["outbound_enabled"] = _OUTBOUND_ENABLED
 
 
@@ -78,7 +82,7 @@ def build():
             schedules=scraper_schedules,
             tags=["production", "scraping"],
             description=(
-                "Scrape job boards every hour (7am-10pm). Auto-chains 02→03→04 only when PREFECT_ENABLE_OUTBOUND=true. "
+                "Scrape job boards every hour (7am-10pm). Auto-chains 02→03→04 only on scheduled runs (PREFECT_ENABLE_SCHEDULES=true). "
                 "Schedule is disabled by default; enable with PREFECT_ENABLE_SCHEDULES=true."
             ),
             parameters={

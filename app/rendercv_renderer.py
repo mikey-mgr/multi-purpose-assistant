@@ -90,6 +90,22 @@ def _github_profile_url(projects: list[dict]) -> str | None:
     return None
 
 
+def _ensure_url_scheme(url: str | None) -> str | None:
+    """Prepend https:// when a URL has no scheme.
+
+    Legacy DB data (e.g. linkedin_url "www.linkedin.com/...") fails RenderCV's
+    URL validation for custom_connections. Normalizing here keeps old rows working.
+    """
+    if not url:
+        return None
+    url = str(url).strip()
+    if not url:
+        return None
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", url):
+        return f"https://{url}"
+    return url
+
+
 def build_yaml_dict(
     user: dict[str, Any],
     resume: dict[str, Any],
@@ -128,7 +144,7 @@ def build_yaml_dict(
         custom_connections.append({
             "fontawesome_icon": "linkedin",
             "placeholder": "LinkedIn",
-            "url": user["linkedin_url"],
+            "url": _ensure_url_scheme(user["linkedin_url"]),
         })
     if github_profile_url := _github_profile_url(projects):
         custom_connections.append({
@@ -140,7 +156,7 @@ def build_yaml_dict(
         custom_connections.append({
             "fontawesome_icon": "link",
             "placeholder": "Portfolio",
-            "url": portfolio_url,
+            "url": _ensure_url_scheme(portfolio_url),
         })
 
     cv: dict[str, Any] = {
@@ -321,7 +337,7 @@ def build_yaml_dict(
     if skills_section:
         sections["TECHNICAL SKILLS"] = skills_section
     additional_information_section = []
-    portfolio_url = additional_information.get("portfolio_url")
+    portfolio_url = _ensure_url_scheme(additional_information.get("portfolio_url"))
     if portfolio_url:
         portfolio_label = additional_information.get("portfolio_label") or portfolio_url.removeprefix("https://").removeprefix("http://")
         additional_information_section.append(

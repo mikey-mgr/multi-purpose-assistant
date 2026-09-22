@@ -66,7 +66,12 @@ class Settings:
         "GMAIL_APP_PASSWORD": "gmail-app-password",
         "LLM_PROVIDER": "llm-provider",
         "LLM_MODEL": "llm-model",
-        "WHATSAPP_API_KEY": "whatsapp-api-key"
+        "WHATSAPP_API_KEY": "whatsapp-api-key",
+        "WHATSAPP_NUMBER": "whatsapp-number",
+        "WHATSAPP_WEBHOOK_SECRET": "whatsapp-webhook-secret",
+        "WHATSAPP_ALLOWED_NUMBERS": "whatsapp-allowed-numbers",
+        "EVOLUTION_INSTANCE_NAME": "evolution-instance-name",
+        "EVOLUTION_WEBHOOK_URL": "evolution-webhook-url"
     }
 
     @classmethod

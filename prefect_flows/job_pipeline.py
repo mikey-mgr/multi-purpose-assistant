@@ -217,7 +217,7 @@ def scrape_and_store(
     match_limit: int = 50,
     job_limit: int = 10,
     chain_next: bool = False,
-    outbound_enabled: bool = False,
+    outbound_enabled: bool = True,
     max_iterations: int = 3,
 ):
     """Scrape job boards. If chain_next=True, triggers 02→03→04 after scraping."""
@@ -280,7 +280,7 @@ def match_jobs_flow(
     match_fallback_model: str = "gemma-4-e2b-it",
     match_fallback_provider: str = "local",
     chain_next: bool = False,
-    outbound_enabled: bool = False,
+    outbound_enabled: bool = True,
     max_iterations: int = 3,
 ) -> int:
     """Match unscored jobs for a user. Loops until all caught up or max_iterations. If chain_next=True, triggers 03→04."""
@@ -345,7 +345,7 @@ def generate_matched_flow(
     generate_fallback_model: str = "gemma-4-e2b-it",
     generate_fallback_provider: str = "local",
     chain_next: bool = False,
-    outbound_enabled: bool = False,
+    outbound_enabled: bool = True,
     max_iterations: int = 3,
 ):
     """
@@ -420,7 +420,7 @@ def apply_agent_flow(
     generate_provider: str = "gemini",
     generate_fallback_model: str = "gemma-4-e2b-it",
     generate_fallback_provider: str = "local",
-    outbound_enabled: bool = False,
+    outbound_enabled: bool = True,
     chain_next: bool = False,
     max_iterations: int = 3,
 ):

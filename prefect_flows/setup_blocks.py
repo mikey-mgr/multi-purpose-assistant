@@ -25,6 +25,11 @@ SECRETS = [
     ("app-config-gmail-address", "GMAIL_ADDRESS", "Gmail sending address"),
     ("app-config-gmail-app-password", "GMAIL_APP_PASSWORD", "Gmail app password"),
     ("app-config-whatsapp-api-key", "WHATSAPP_API_KEY", "Whatsapp api key"),
+    ("app-config-whatsapp-number", "WHATSAPP_NUMBER", "WhatsApp bot number (e.g. 263717827381@s.whatsapp.net)"),
+    ("app-config-whatsapp-webhook-secret", "WHATSAPP_WEBHOOK_SECRET", "Shared Evolution webhook secret (x-webhook-secret)"),
+    ("app-config-whatsapp-allowed-numbers", "WHATSAPP_ALLOWED_NUMBERS", "Comma-separated allowed sender numbers"),
+    ("app-config-evolution-instance-name", "EVOLUTION_INSTANCE_NAME", "Evolution API instance name"),
+    ("app-config-evolution-webhook-url", "EVOLUTION_WEBHOOK_URL", "Public webhook URL Evolution POSTs to"),
 ]
 
 

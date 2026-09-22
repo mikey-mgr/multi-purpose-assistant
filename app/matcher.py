@@ -167,7 +167,7 @@ def _parse_response(raw: str, jobs: list[ScrapedJob]) -> tuple[list[dict], list[
             decisions.append({
                 "job_id": jobs[idx].id,
                 "user_id": None,  # filled by caller
-                "status": item.get("status", "rejected"),
+                "status": _normalize_status(item.get("status"), item.get("score")),
                 "score": item.get("score"),
                 "reason": item.get("reason"),
                 "matched_by": "llm",
@@ -190,6 +190,25 @@ def _parse_response(raw: str, jobs: list[ScrapedJob]) -> tuple[list[dict], list[
                 "remote_eligible": enc.get("remote_eligible"),
             })
     return decisions, enrichments
+
+
+_ALLOWED_STATUSES = {"matched", "rejected"}
+
+
+def _normalize_status(status: Any, score: Any) -> str:
+    """Coerce LLM status to a DB-safe value.
+
+    The matcher prompt's calibration bands ("credible fit", "stretch", ...) leak
+    into `status` on some models (e.g. "stretching", "credible fit"), violating
+    job_matches_status_check. Only "matched"/"rejected" pass through; anything
+    else derives from score (>=50 → matched, else rejected).
+    """
+    if isinstance(status, str) and status.strip().lower() in _ALLOWED_STATUSES:
+        return status.strip().lower()
+    try:
+        return "matched" if float(score or 0) >= 50 else "rejected"
+    except (TypeError, ValueError):
+        return "rejected"
 
 
 def _to_float(v) -> float | None:
