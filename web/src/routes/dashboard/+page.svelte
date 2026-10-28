@@ -90,7 +90,12 @@
 	</div>
 
 	<div class="mt-8 flex flex-wrap items-center justify-between gap-3">
-		<h2 id="matches" class="scroll-mt-24 font-display text-xl font-bold text-ink">Matches for you</h2>
+		<div class="flex items-center gap-3">
+			<h2 id="matches" class="scroll-mt-24 font-display text-xl font-bold text-ink">
+				Matches for you
+			</h2>
+			<a href="/matches" class="text-xs font-semibold text-link">View all</a>
+		</div>
 		<div class="flex rounded-full border border-line bg-surface p-1 text-xs font-semibold">
 			<button type="button" class="rounded-full px-3 py-1.5 text-ink-muted">Strict</button>
 			<button type="button" class="rounded-full bg-brand px-3 py-1.5 text-on-brand">Balanced</button>

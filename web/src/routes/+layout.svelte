@@ -58,6 +58,7 @@
 				<a href="/#pricing" class="transition-colors hover:text-ink">Pricing</a>
 				{#if data.user}
 					<a href="/jobs" class="transition-colors hover:text-ink">Jobs</a>
+					<a href="/matches" class="transition-colors hover:text-ink">Matches</a>
 					<a href="/dashboard" class="transition-colors hover:text-ink">Workspace</a>
 					<a href="/settings" class="transition-colors hover:text-ink">Settings</a>
 				{/if}
