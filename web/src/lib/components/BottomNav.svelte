@@ -4,7 +4,7 @@
 	const items = [
 		{ href: '/dashboard', label: 'Jobs', icon: 'briefcase' },
 		{ href: '/dashboard#matches', label: 'Matches', icon: 'target' },
-		{ href: '/dashboard#documents', label: 'Docs', icon: 'file' },
+		{ href: '/documents', label: 'Docs', icon: 'file' },
 		{ href: '/dashboard#prep', label: 'Prep', icon: 'mic' },
 		{ href: '/dashboard#profile', label: 'Profile', icon: 'user' }
 	];

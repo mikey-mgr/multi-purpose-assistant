@@ -111,7 +111,10 @@
 
 	<div class="mt-8 grid gap-4 md:grid-cols-2">
 		<section id="documents" class="scroll-mt-24 rounded-2xl border border-line bg-surface p-5">
-			<h2 class="font-display text-lg font-bold text-ink">Documents</h2>
+			<div class="flex items-center justify-between gap-3">
+				<h2 class="font-display text-lg font-bold text-ink">Documents</h2>
+				<a href="/documents" class="text-xs font-semibold text-link">View all</a>
+			</div>
 			<p class="mt-1 text-sm text-ink-muted">Your latest tailored files.</p>
 			<div class="mt-4 space-y-3">
 				{#each docs as document}
