@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
 	bigint,
 	boolean,
+	date,
 	index,
 	integer,
 	jsonb,
@@ -99,6 +100,7 @@ export const profiles = pgTable('profiles', {
 		.default(sql`'{}'::text[]`),
 	matchMode: text('match_mode').notNull().default('balanced'),
 	onboardingCompleted: boolean('onboarding_completed').notNull().default(false),
+	legacyUserId: text('legacy_user_id'),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 });
@@ -147,6 +149,89 @@ export type KitAttachment = {
 	mime: string;
 	contentBase64: string;
 };
+
+export const jobs = pgTable(
+	'jobs',
+	{
+		id: integer('id').primaryKey(),
+		publicId: uuid('public_id').notNull().defaultRandom().unique(),
+		source: text('source'),
+		sourceUrl: text('source_url'),
+		title: text('title'),
+		company: text('company'),
+		location: text('location'),
+		description: text('description'),
+		jobType: text('job_type'),
+		compensation: text('compensation'),
+		datePosted: date('date_posted'),
+		expires: date('expires'),
+		category: text('category'),
+		remote: text('remote'),
+		applyInstructions: text('apply_instructions'),
+		scrapedAt: timestamp('scraped_at', { withTimezone: true }).notNull().defaultNow(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		index('jobs_date_posted_idx').on(table.datePosted),
+		index('jobs_category_idx').on(table.category),
+		index('jobs_company_idx').on(table.company)
+	]
+);
+
+export const jobMatches = pgTable(
+	'job_matches',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		jobId: integer('job_id')
+			.notNull()
+			.references(() => jobs.id, { onDelete: 'cascade' }),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		status: text('status').notNull().default('matched'),
+		score: integer('score'),
+		reason: text('reason'),
+		proceed: text('proceed'),
+		applyAction: text('apply_action'),
+		applyRecipient: text('apply_recipient'),
+		applySubject: text('apply_subject'),
+		applyBody: text('apply_body'),
+		applyUrl: text('apply_url'),
+		requiredDocs: text('required_docs'),
+		expiryDate: date('expiry_date'),
+		mergedPdf: boolean('merged_pdf').default(false),
+		matchedBy: text('matched_by').default('llm'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		uniqueIndex('job_matches_job_user_idx').on(table.jobId, table.userId),
+		index('job_matches_user_status_idx').on(table.userId, table.status)
+	]
+);
+
+export const documents = pgTable(
+	'documents',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		jobId: integer('job_id').references(() => jobs.id, { onDelete: 'set null' }),
+		documentType: text('document_type').notNull(),
+		rendercvYaml: text('rendercv_yaml'),
+		content: text('content'),
+		pdfPath: text('pdf_path'),
+		docxPath: text('docx_path'),
+		promptName: text('prompt_name'),
+		model: text('model'),
+		tokensUsed: integer('tokens_used').default(0),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		index('documents_user_id_idx').on(table.userId),
+		index('documents_job_id_idx').on(table.jobId)
+	]
+);
 
 export const oauthAccounts = pgTable(
 	'oauth_accounts',
