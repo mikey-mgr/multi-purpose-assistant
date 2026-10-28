@@ -28,3 +28,8 @@ web/worker-configuration.d.ts
 workers/**/.wrangler/
 workers/**/.dev.vars
 workers/**/node_modules/
+
+# Local payment sandbox notes / credentials
+web/*sandbox*.md
+
+web/*scandbox*.md

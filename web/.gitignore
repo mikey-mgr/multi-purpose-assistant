@@ -24,3 +24,8 @@ vite.config.ts.timestamp-*
 
 .dev.vars
 worker-configuration.d.ts
+
+# Local payment sandbox notes / credentials
+*sandbox*.md
+
+*scandbox*.md
