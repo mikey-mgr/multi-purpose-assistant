@@ -1,0 +1,4 @@
+Contact: mailto:security@mikeyverse.co.zw
+Expires: 2027-10-27T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://mukana.mikeyverse.co.zw/.well-known/security.txt

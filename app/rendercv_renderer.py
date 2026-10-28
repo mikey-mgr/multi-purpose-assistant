@@ -115,7 +115,6 @@ def build_yaml_dict(
     projects: list[dict],
     skills: list[dict],
     llm_section_overrides: dict[str, Any] | None = None,
-    references_full: list[dict] | None = None,
 ) -> dict:
     """
     Build a RenderCV-ready dictionary from database data and optional
@@ -126,10 +125,9 @@ def build_yaml_dict(
       - experience_highlights: dict["Company Name - Job Title", list[str]] — rewritten bullets (composite key)
       - skills: list[{"label": str, "details": str}] — curated skills list
       - project_highlights: dict[project_name, list[str]] — rewritten bullets
-      - references: list[{"ref_id": str, "name": str, "description": str}] — AI-decided ref entries
 
-    `references_full`: full reference records from the DB (with phone/email) for populating
-      the references section without exposing contact details to the LLM.
+    Reference contacts are never rendered. The REFERENCES section always reads
+    "Available upon request"; reference records stay in the database only.
     """
     overrides = llm_section_overrides or {}
 
@@ -301,31 +299,9 @@ def build_yaml_dict(
         projects_section = []
 
     # ── References ────────────────────────────────────────────────────
-    ref_overrides = overrides.get("references")
-    if isinstance(ref_overrides, list) and ref_overrides and references_full:
-        ref_index = {r["ref_id"]: r for r in references_full}
-        ref_list = []
-        for ref in ref_overrides:
-            rid = ref.get("ref_id")
-            full = ref_index.get(rid)
-            if not full:
-                continue
-            contact_lines = []
-            if full.get("email"):
-                contact_lines.append(f"Email: {full['email']}")
-            if full.get("phone"):
-                contact_lines.append(f"Phone: {full['phone']}")
-            ref_list.append({
-                "name": full["name"],
-                "summary": ref.get("description", ""),
-                "highlights": contact_lines or None,
-            })
-        if ref_list:
-            references_section = ref_list
-        else:
-            references_section = []
-    else:
-        references_section = []
+    # Never render reference contacts. References stay in the DB only; the CV
+    # always states they are available on request.
+    references_section = ["Available upon request"]
 
     # Keep the same reading order as the candidate's established CV style.
     if education_section:
@@ -345,8 +321,6 @@ def build_yaml_dict(
         )
     if availability := additional_information.get("availability"):
         additional_information_section.append(f"**Availability:** {availability}")
-    if references_note := additional_information.get("references"):
-        additional_information_section.append(f"**References:** {references_note}")
     if additional_information_section:
         sections["ADDITIONAL INFORMATION"] = additional_information_section
     if certifications_section:

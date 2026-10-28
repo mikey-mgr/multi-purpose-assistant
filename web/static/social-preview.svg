@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="Mukana — Less applying. More interviewing.">
+	<rect width="1200" height="630" fill="#FAF7F2" />
+	<circle cx="1030" cy="110" r="260" fill="#C84B26" opacity="0.10" />
+	<circle cx="1090" cy="520" r="180" fill="#1B6B48" opacity="0.08" />
+	<g transform="translate(80 76) scale(1.8)">
+		<rect width="40" height="40" rx="11" fill="#C84B26" />
+		<path
+			d="M10 29V14.5c0-1.4 1.8-2 2.7-1L20 21.5l7.3-8c.9-1 2.7-.4 2.7 1V29"
+			fill="none"
+			stroke="#FAF7F2"
+			stroke-width="4.2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		/>
+		<circle cx="31" cy="9.5" r="3.6" fill="#1B6B48" />
+	</g>
+	<text x="80" y="258" font-family="Inter, system-ui, sans-serif" font-size="24" font-weight="700" letter-spacing="6" fill="#66605C">MUKANA</text>
+	<text x="80" y="352" font-family="Space Grotesk, Inter, system-ui, sans-serif" font-size="78" font-weight="800" fill="#1A1817">Less applying.</text>
+	<text x="80" y="438" font-family="Space Grotesk, Inter, system-ui, sans-serif" font-size="78" font-weight="800" fill="#C84B26">More interviewing.</text>
+	<text x="82" y="510" font-family="Inter, system-ui, sans-serif" font-size="28" font-weight="500" fill="#66605C">Job applications, prepared.</text>
+</svg>

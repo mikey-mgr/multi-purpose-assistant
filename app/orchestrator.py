@@ -111,7 +111,6 @@ def process_job_for_user(
             projects=profile_data["projects"],
             skills=profile_data["skills"],
             llm_section_overrides=resume_overrides,
-            references_full=profile_data.get("references_full"),
         )
         cv_yaml_str = json.dumps(cv_dict, indent=2)
 

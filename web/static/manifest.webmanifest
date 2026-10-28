@@ -1,0 +1,23 @@
+{
+	"name": "Mukana — Job applications, prepared",
+	"short_name": "Mukana",
+	"description": "Find roles that fit, tailor your CV and cover letter, prepare the application, and get ready for the interview.",
+	"start_url": "/",
+	"display": "standalone",
+	"background_color": "#FAF7F2",
+	"theme_color": "#C84B26",
+	"icons": [
+		{
+			"src": "/icon.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "any"
+		},
+		{
+			"src": "/icon.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "maskable"
+		}
+	]
+}

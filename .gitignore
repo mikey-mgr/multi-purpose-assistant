@@ -14,3 +14,17 @@ profiles/candidate_profile.yaml
 profiles/*.private.yaml
 documents/*
 backups/*
+
+# Web app / Cloudflare
+web/node_modules/
+web/.svelte-kit/
+web/.wrangler/
+web/.env
+web/.env.*
+!web/.env.example
+!web/.env.test
+web/.dev.vars
+web/worker-configuration.d.ts
+workers/**/.wrangler/
+workers/**/.dev.vars
+workers/**/node_modules/

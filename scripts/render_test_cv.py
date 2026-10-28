@@ -39,7 +39,6 @@ def main() -> None:
         certifications=profile_data["certifications"],
         projects=profile_data["projects"],
         skills=profile_data["skills"],
-        references_full=profile_data.get("references_full"),
     )
     print(render(cv, job_title=args.job_title))
 

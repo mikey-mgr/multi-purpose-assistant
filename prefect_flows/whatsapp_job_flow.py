@@ -481,7 +481,6 @@ def process_whatsapp_job(
             projects=user_data["projects"],
             skills=user_data["skills"],
             llm_section_overrides=resume_overrides,
-            references_full=user_data.get("references_full"),
         )
         pdf_path = _render_pdf_with_retry(cv_dict, job_data.get("title", "job"), db_job.id)
 
@@ -829,7 +828,6 @@ def _build_job_pipeline_from_llm(
             projects=user_data["projects"],
             skills=user_data["skills"],
             llm_section_overrides=resume_overrides,
-            references_full=user_data.get("references_full"),
         )
         pdf_path = _render_pdf_with_retry(cv_dict, job_data.get("title", "job"), db_job.id)
 
