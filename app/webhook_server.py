@@ -12,6 +12,7 @@ import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 import httpx
 from fastapi import FastAPI, Request, BackgroundTasks
@@ -37,6 +38,8 @@ _ALLOWED_NUMBERS = tuple(
 
 _EVOLUTION_API_URL = settings.EVOLUTION_API_URL
 _EVOLUTION_WEBHOOK_URL = settings.EVOLUTION_WEBHOOK_URL
+_MATCH_TRIGGER_SECRET = settings.MATCH_TRIGGER_SECRET
+_MATCH_TRIGGER_HEADER = "x-match-trigger-secret"
 
 
 async def _register_evolution_webhook() -> bool:
@@ -76,7 +79,10 @@ async def _register_evolution_webhook() -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("WhatsApp webhook server starting ...")
-    app.state.evolution_webhook_configured = await _register_evolution_webhook()
+    if os.getenv("SKIP_EVOLUTION_REGISTRATION", "").lower() in {"1", "true", "yes"}:
+        app.state.evolution_webhook_configured = False
+    else:
+        app.state.evolution_webhook_configured = await _register_evolution_webhook()
     yield
     logger.info("WhatsApp webhook server shutting down.")
 
@@ -267,6 +273,53 @@ async def whatsapp_text_webhook(request: Request, background_tasks: BackgroundTa
     return JSONResponse(status_code=202, content={"status": "accepted"})
 
 
+@app.post("/api/matches/run")
+async def run_matches(request: Request, background_tasks: BackgroundTasks):
+    """Trigger a matching run for a linked candidate."""
+    if not _MATCH_TRIGGER_SECRET:
+        return JSONResponse(status_code=503, content={"error": "Match trigger is not configured"})
+
+    header = request.headers.get(_MATCH_TRIGGER_HEADER)
+    if not header or not secrets.compare_digest(header, _MATCH_TRIGGER_SECRET):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+
+    user_id = body.get("user_id")
+    if not isinstance(user_id, str) or not user_id.strip():
+        return JSONResponse(status_code=400, content={"error": "Missing user_id"})
+
+    try:
+        limit = int(body.get("limit") or 50)
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={"error": "Invalid limit"})
+
+    match_since = None
+    raw_since = body.get("match_since")
+    if raw_since:
+        if not isinstance(raw_since, str):
+            return JSONResponse(status_code=400, content={"error": "Invalid match_since"})
+        try:
+            match_since = datetime.fromisoformat(raw_since.replace("Z", "+00:00"))
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Invalid match_since"})
+
+    background_tasks.add_task(
+        _run_match_flow, user_id.strip(), match_since, max(1, min(limit, 200))
+    )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "accepted",
+            "user_id": user_id.strip(),
+            "match_since": raw_since,
+        },
+    )
+
+
 @app.get("/health")
 async def health():
     return {
@@ -293,6 +346,21 @@ def _run_image_flow(image_base64: str, mimetype: str):
         generate_fallback_provider=_DEFAULTS["generate_fallback_provider"],
     )
     logger.info("Image flow completed.")
+
+
+def _run_match_flow(user_id: str, match_since, limit: int):
+    from prefect_flows.job_pipeline import match_jobs_flow
+
+    try:
+        match_jobs_flow(
+            user_id=user_id,
+            limit=limit,
+            match_since=match_since,
+            chain_next=False,
+            outbound_enabled=False,
+        )
+    except Exception:
+        logger.exception("Match run failed for user %s", user_id)
 
 
 def _run_text_flow(text: str):

@@ -46,6 +46,7 @@ class Settings:
     WHATSAPP_WEBHOOK_SECRET: str | None = os.getenv("WHATSAPP_WEBHOOK_SECRET") or WHATSAPP_API_KEY
     WHATSAPP_ALLOWED_NUMBERS: str = os.getenv("WHATSAPP_ALLOWED_NUMBERS", "")
     EVOLUTION_WEBHOOK_URL: str | None = os.getenv("EVOLUTION_WEBHOOK_URL")
+    MATCH_TRIGGER_SECRET: str | None = os.getenv("MATCH_TRIGGER_SECRET")
 
     # ── Email (Gmail SMTP) ──────────────────────────────────────────
     GMAIL_ADDRESS: str | None = os.getenv("GMAIL_ADDRESS")
@@ -84,6 +85,8 @@ class Settings:
         Blocks named `app-config-<suffix>`.  Silently skips if
         the Prefect server is unreachable or a block is missing.
         """
+        if os.getenv("SKIP_PREFECT_BLOCKS", "").lower() in {"1", "true", "yes"}:
+            return cls
         try:
             from prefect.blocks.system import Secret
 

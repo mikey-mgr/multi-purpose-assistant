@@ -19,6 +19,20 @@
 		if (status === 'waiting') return 'bg-surface-2 text-warn';
 		return 'bg-surface-2 text-ink';
 	}
+
+	let running = $state(false);
+	let notice = $state('');
+
+	async function runMatching() {
+		running = true;
+		notice = '';
+		const response = await fetch('/api/matches/run', { method: 'POST' });
+		const result = (await response.json().catch(() => ({}))) as { error?: string };
+		running = false;
+		notice = response.ok
+			? 'Matching started. Refresh in a few minutes to see new results.'
+			: (result.error ?? 'Could not start matching');
+	}
 </script>
 
 <svelte:head>
@@ -35,13 +49,29 @@
 			</h1>
 			<p class="mt-2 text-sm text-ink-muted">{data.total} matches in this view.</p>
 		</div>
-		<a
-			href="/dashboard"
-			class="inline-flex h-10 items-center rounded-full border border-line-strong bg-surface px-4 text-sm font-semibold text-ink hover:bg-surface-2"
-		>
-			Back to dashboard
-		</a>
+		<div class="flex flex-wrap items-center gap-2">
+			<button
+				type="button"
+				onclick={runMatching}
+				disabled={running}
+				class="inline-flex h-10 items-center rounded-full bg-brand px-4 text-sm font-semibold text-on-brand hover:bg-brand-hover disabled:opacity-60"
+			>
+				{running ? 'Starting...' : 'Run matching'}
+			</button>
+			<a
+				href="/dashboard"
+				class="inline-flex h-10 items-center rounded-full border border-line-strong bg-surface px-4 text-sm font-semibold text-ink hover:bg-surface-2"
+			>
+				Back to dashboard
+			</a>
+		</div>
 	</div>
+
+	{#if notice}
+		<p class="mt-4 rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink" role="status">
+			{notice}
+		</p>
+	{/if}
 
 	<div class="mt-5 flex gap-2 overflow-x-auto pb-1">
 		{#each tabs as tab}

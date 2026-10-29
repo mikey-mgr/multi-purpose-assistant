@@ -33,3 +33,5 @@ workers/**/node_modules/
 web/*sandbox*.md
 
 web/*scandbox*.md
+
+.wrangler/

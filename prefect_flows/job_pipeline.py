@@ -287,6 +287,10 @@ def match_jobs_flow(
     match_since=None,
 ) -> int:
     """Match unscored jobs for a user. Loops until all caught up or max_iterations. If chain_next=True, triggers 03�+'04."""
+    if isinstance(match_since, str):
+        from datetime import datetime
+
+        match_since = datetime.fromisoformat(match_since.replace("Z", "+00:00"))
     run_logger = get_run_logger()
     try:
         total_matched = 0
