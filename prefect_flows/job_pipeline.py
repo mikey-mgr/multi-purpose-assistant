@@ -83,6 +83,7 @@ def match_pending_jobs(
     match_provider: str = "gemini",
     match_fallback_model: str = "gemma-4-e2b-it",
     match_fallback_provider: str = "local",
+    match_since=None,
 ) -> int:
     """Batch-classify unscored jobs and persist decisions."""
     decisions = batch_match_jobs(
@@ -92,6 +93,7 @@ def match_pending_jobs(
         provider=match_provider,
         fallback_model=match_fallback_model,
         fallback_provider=match_fallback_provider,
+        match_since=match_since,
     )
     return len(decisions)
 
@@ -282,13 +284,14 @@ def match_jobs_flow(
     chain_next: bool = False,
     outbound_enabled: bool = True,
     max_iterations: int = 3,
+    match_since=None,
 ) -> int:
-    """Match unscored jobs for a user. Loops until all caught up or max_iterations. If chain_next=True, triggers 03→04."""
+    """Match unscored jobs for a user. Loops until all caught up or max_iterations. If chain_next=True, triggers 03�+'04."""
     run_logger = get_run_logger()
     try:
         total_matched = 0
         for iteration in range(1, max_iterations + 1):
-            remaining = count_unscored_jobs(user_id)
+            remaining = count_unscored_jobs(user_id, match_since=match_since)
             if remaining == 0:
                 break
             run_logger.info(
@@ -304,6 +307,7 @@ def match_jobs_flow(
                 match_provider=match_provider,
                 match_fallback_model=match_fallback_model,
                 match_fallback_provider=match_fallback_provider,
+                match_since=match_since,
             )
             total_matched += matched
 

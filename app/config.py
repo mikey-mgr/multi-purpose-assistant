@@ -33,6 +33,9 @@ class Settings:
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "1536"))
 
+    # Only new users with no match history are limited to recent jobs.
+    NEW_USER_MATCH_WINDOW_DAYS: int = int(os.getenv("NEW_USER_MATCH_WINDOW_DAYS", "7"))
+
     # ── Services ────────────────────────────────────────────────────
     SERPAPI_API_KEY: str | None = os.getenv("SERPAPI_API_KEY")
     TAVILY_API_KEY: str | None = os.getenv("TAVILY_API_KEY")

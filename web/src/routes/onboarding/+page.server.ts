@@ -67,7 +67,12 @@ export const actions = {
 		const updatedAt = new Date();
 		await db
 			.insert(profiles)
-			.values({ userId: locals.user.id, ...parsed.data, updatedAt })
+			.values({
+				userId: locals.user.id,
+				...parsed.data,
+				matchSince: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+				updatedAt
+			})
 			.onConflictDoUpdate({
 				target: profiles.userId,
 				set: { ...parsed.data, updatedAt }

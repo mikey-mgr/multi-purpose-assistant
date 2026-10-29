@@ -8,6 +8,7 @@ persists the match/reject decisions to the job_matches table.
 
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -228,6 +229,7 @@ def batch_match_jobs(
     provider: str = "gemini",
     fallback_model: str = "gemma-4-e2b-it",
     fallback_provider: str = "local",
+    match_since: datetime | None = None,
 ) -> list[dict]:
     """
     Main entry point.
@@ -253,7 +255,9 @@ def batch_match_jobs(
         len(profile.get("projects", [])),
     )
 
-    jobs, dedup_map = get_deduped_unscored_jobs(user_id, limit=limit)
+    jobs, dedup_map = get_deduped_unscored_jobs(
+        user_id, limit=limit, match_since=match_since
+    )
     if not jobs:
         logger.info("No unscored jobs for user %s", user_id)
         return []

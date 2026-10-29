@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text, Date, DateTime, Boolean,
-    ARRAY, ForeignKey, text, Index, select, Numeric, func, and_,
+    ARRAY, ForeignKey, text, Index, select, Numeric, func, and_, or_,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID, TSVECTOR, JSONB
@@ -754,19 +754,51 @@ def get_unscored_jobs(user_id: str, limit: int = 50):
         session.close()
 
 
-def count_unscored_jobs(user_id: str) -> int:
+def _apply_new_user_match_window(session, query, user_id: str, match_since=None):
+    """Limit first-time users to jobs from their matching window."""
+    if match_since is not None:
+        return query.filter(
+            or_(
+                ScrapedJob.date_posted >= match_since.date(),
+                and_(
+                    ScrapedJob.date_posted.is_(None),
+                    ScrapedJob.scraped_at >= match_since,
+                ),
+            )
+        )
+
+    has_matches = session.query(JobMatch.id).filter(
+        JobMatch.user_id == user_id
+    ).first()
+    if has_matches:
+        return query
+
+    days = max(1, settings.NEW_USER_MATCH_WINDOW_DAYS)
+    interval = text(f"interval '{days} days'")
+    return query.filter(
+        or_(
+            ScrapedJob.date_posted >= func.current_date() - interval,
+            and_(
+                ScrapedJob.date_posted.is_(None),
+                ScrapedJob.scraped_at >= func.now() - interval,
+            ),
+        )
+    )
+
+
+def count_unscored_jobs(user_id: str, match_since=None) -> int:
     """Count jobs not yet scored for this user."""
     session = get_session()
     try:
         subq = session.query(JobMatch.job_id).filter(JobMatch.user_id == user_id)
-        return session.query(ScrapedJob).filter(
-            ~ScrapedJob.id.in_(subq)
-        ).count()
+        query = session.query(ScrapedJob).filter(~ScrapedJob.id.in_(subq))
+        query = _apply_new_user_match_window(session, query, user_id, match_since)
+        return query.count()
     finally:
         session.close()
 
 
-def get_deduped_unscored_jobs(user_id: str, limit: int = 50):
+def get_deduped_unscored_jobs(user_id: str, limit: int = 50, match_since=None):
     """Fetch unscored jobs deduped by (company, normalized_title).
 
     Returns (deduped_jobs, dedup_map) where dedup_map maps the
@@ -775,9 +807,9 @@ def get_deduped_unscored_jobs(user_id: str, limit: int = 50):
     session = get_session()
     try:
         subq = session.query(JobMatch.job_id).filter(JobMatch.user_id == user_id)
-        jobs = session.query(ScrapedJob).filter(
-            ~ScrapedJob.id.in_(subq)
-        ).limit(limit * 3).all()
+        query = session.query(ScrapedJob).filter(~ScrapedJob.id.in_(subq))
+        query = _apply_new_user_match_window(session, query, user_id, match_since)
+        jobs = query.limit(limit * 3).all()
 
         groups: dict[tuple[str, str], list[ScrapedJob]] = {}
         for job in jobs:

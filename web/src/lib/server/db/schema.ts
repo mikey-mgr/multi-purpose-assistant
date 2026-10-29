@@ -101,6 +101,7 @@ export const profiles = pgTable('profiles', {
 	matchMode: text('match_mode').notNull().default('balanced'),
 	onboardingCompleted: boolean('onboarding_completed').notNull().default(false),
 	legacyUserId: text('legacy_user_id'),
+	matchSince: timestamp('match_since', { withTimezone: true }),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
 });

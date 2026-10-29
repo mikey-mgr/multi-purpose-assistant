@@ -1,0 +1,1 @@
+ALTER TABLE "profiles" ADD COLUMN "match_since" timestamp with time zone;

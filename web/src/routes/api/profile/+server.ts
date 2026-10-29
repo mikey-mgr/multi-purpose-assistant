@@ -92,7 +92,11 @@ export const PATCH: RequestHandler = async (event) => {
 	const updatedAt = new Date();
 	const result = await db
 		.insert(profiles)
-		.values({ userId: event.locals.user.id, ...data })
+		.values({
+			userId: event.locals.user.id,
+			...data,
+			matchSince: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+		})
 		.onConflictDoUpdate({
 			target: profiles.userId,
 			set: { ...data, updatedAt }
