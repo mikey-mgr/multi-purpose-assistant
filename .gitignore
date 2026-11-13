@@ -28,6 +28,26 @@ web/worker-configuration.d.ts
 workers/**/.wrangler/
 workers/**/.dev.vars
 workers/**/node_modules/
+containers/**/.wrangler/
+containers/**/.dev.vars
+containers/**/node_modules/
+containers/**/dist/
+__pycache__/
+*.pyc
+
+# Local database backups
+data/backups/
+
+# Scratch space: throwaway scripts, logs and generated PDFs that often contain
+# real candidate data. Never commit these.
+data/tmp/
+
+# Cloud-drive sync temp files (may contain partial uploads of local secrets)
+data/.tmp.*/
+
+# Tool state and stray redirect artifacts
+.commandcode/
+$null
 
 # Local payment sandbox notes / credentials
 web/*sandbox*.md
