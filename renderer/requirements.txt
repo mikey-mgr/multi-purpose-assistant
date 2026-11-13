@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+pyyaml
+rendercv==2.8
+pypdf
+pillow
+fpdf2
+python-docx

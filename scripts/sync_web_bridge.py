@@ -3,6 +3,7 @@
 import os
 import time
 import uuid
+from datetime import date
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
@@ -84,6 +85,100 @@ MATCHES_SQL = text(
          merged_pdf = excluded.merged_pdf,
          matched_by = excluded.matched_by"""
 )
+
+def legacy_profile_summary(source, legacy_uuid) -> dict:
+    resume = source.execute(
+        text(
+            """select id, professional_summary
+               from resumes
+               where user_id = :user_id and is_active = true
+               order by updated_at desc nulls last
+               limit 1"""
+        ),
+        {"user_id": legacy_uuid},
+    ).mappings().first()
+    if not resume:
+        return {}
+
+    resume_id = resume["id"]
+    skills = source.execute(
+        text(
+            """select skill_name from skills
+               where resume_id = :resume_id and skill_type != 'Soft Skill'
+               order by skill_name"""
+        ),
+        {"resume_id": resume_id},
+    ).scalars().all()
+    experience = source.execute(
+        text(
+            """select company_name, job_title, start_date, end_date, bullet_points
+               from work_experience where resume_id = :resume_id
+               order by display_order nulls last, start_date desc"""
+        ),
+        {"resume_id": resume_id},
+    ).mappings().all()
+    education = source.execute(
+        text(
+            """select institution_name, degree_type, field_of_study
+               from education where resume_id = :resume_id
+               order by display_order nulls last, end_date desc"""
+        ),
+        {"resume_id": resume_id},
+    ).mappings().all()
+    projects = source.execute(
+        text(
+            """select project_name, description, tech_stack, bullet_points
+               from projects where resume_id = :resume_id
+               order by display_order nulls last"""
+        ),
+        {"resume_id": resume_id},
+    ).mappings().all()
+
+    lines = []
+    if resume["professional_summary"]:
+        lines.extend([resume["professional_summary"], ""])
+    if skills:
+        lines.extend(["Skills: " + ", ".join(skills), ""])
+    if experience:
+        lines.append("Experience:")
+        for item in experience:
+            lines.append(f"{item['job_title']} - {item['company_name']}")
+            for bullet in item["bullet_points"] or []:
+                lines.append(f"- {bullet}")
+            lines.append("")
+    if education:
+        lines.append("Education:")
+        for item in education:
+            lines.append(
+                f"{item['degree_type']} {item['field_of_study']} - {item['institution_name']}"
+            )
+        lines.append("")
+    if projects:
+        lines.append("Projects:")
+        for item in projects:
+            lines.append(f"{item['project_name']}: {item['description']}")
+            for bullet in item["bullet_points"] or []:
+                lines.append(f"- {bullet}")
+            lines.append("")
+
+    headline = None
+    if experience:
+        latest = experience[0]
+        headline = f"{latest['job_title']} at {latest['company_name']}"[:160]
+    elif resume["professional_summary"]:
+        headline = resume["professional_summary"][:160]
+
+    start_dates = [item["start_date"] for item in experience if item["start_date"]]
+    years = None
+    if start_dates:
+        years = max(0, (date.today() - min(start_dates)).days // 365)
+
+    return {
+        "resume_text": "\n".join(lines).strip()[:20000],
+        "headline": headline,
+        "years_experience": years,
+    }
+
 
 DOCS_SQL = text(
     """insert into documents
@@ -169,6 +264,29 @@ def main() -> None:
                 ),
                 {"legacy_user_id": legacy_user_id, "user_id": web_user_id},
             )
+
+            summary = legacy_profile_summary(src, legacy_uuid)
+            if summary:
+                dst.execute(
+                    text(
+                        """update profiles set
+                             resume_text = :resume_text,
+                             headline = coalesce(headline, :headline),
+                             years_experience = greatest(
+                               coalesce(years_experience, 0),
+                               coalesce(:years_experience, 0)
+                             ),
+                             updated_at = now()
+                           where user_id = :user_id"""
+                    ),
+                    {
+                        "resume_text": summary["resume_text"],
+                        "headline": summary["headline"],
+                        "years_experience": summary["years_experience"],
+                        "user_id": web_user_id,
+                    },
+                )
+                print("synced profile resume text", flush=True)
 
             existing_job_ids = {
                 row[0] for row in dst.execute(text("select id from jobs"))

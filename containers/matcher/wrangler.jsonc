@@ -1,0 +1,31 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "mukana-matcher",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-01",
+	"observability": {
+		"enabled": true
+	},
+	"containers": [
+		{
+			"class_name": "MatcherContainer",
+			"image": "./Dockerfile",
+			"max_instances": 2,
+			"instance_type": "lite"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "MATCHER",
+				"class_name": "MatcherContainer"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["MatcherContainer"]
+		}
+	]
+}
