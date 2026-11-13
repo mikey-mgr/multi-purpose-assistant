@@ -27,7 +27,7 @@ def send_flow_error_notification(flow_name: str, error: str) -> bool:
     Send a WhatsApp notification that a Prefect flow failed after all retries.
     """
     text = (
-        f"⚠️ Pipeline Alert — {flow_name}\n\n"
+        f"Ã¢Å¡Â Ã¯Â¸Â Pipeline Alert Ã¢â‚¬â€ {flow_name}\n\n"
         f"The flow '{flow_name}' failed after all retries.\n"
         f"Error: {error[:500]}"
     )
@@ -39,6 +39,7 @@ def send_whatsapp(
     fit_assessment: str | None = None,
     score: int | None = None,
     missing_docs: list[str] | None = None,
+    number: str | None = None,
 ) -> bool:
     """
     Send a WhatsApp message with fit assessment and missing-docs context.
@@ -52,15 +53,18 @@ def send_whatsapp(
     text : str
         Main message body.
     fit_assessment : str | None
-        "high", "medium", or "low" — how well the user fits the role.
+        "high", "medium", or "low" Ã¢â‚¬â€ how well the user fits the role.
     score : int | None
         Match score from job_matches (0-100).
     missing_docs : list[str] | None
         Document types the job requires but the user doesn't have.
+    number : str | None
+        Recipient in WhatsApp JID form (e.g. "263771234567@s.whatsapp.net").
+        Defaults to the configured owner number when omitted.
 
     Returns
     -------
-    bool — True if sent successfully, False otherwise.
+    bool Ã¢â‚¬â€ True if sent successfully, False otherwise.
     """
     
     if not _WHATSAPP_API_KEY:
@@ -68,7 +72,12 @@ def send_whatsapp(
         return False
 
     if not text:
-        logger.warning("WhatsApp message text is empty — skipping.")
+        logger.warning("WhatsApp message text is empty Ã¢â‚¬â€ skipping.")
+        return False
+
+    recipient = number or _WHATSAPP_NUMBER
+    if not recipient:
+        logger.error("No WhatsApp recipient configured.")
         return False
 
     delay_seconds = random.uniform(5, 15)
@@ -89,9 +98,9 @@ def send_whatsapp(
         "Content-Type": "application/json",
     }
 
-    # Send presence composing signal (sets "typing…" for delay_ms duration)
+    # Send presence composing signal (sets "typingÃ¢â‚¬Â¦" for delay_ms duration)
     presence_payload = {
-        "number": _WHATSAPP_NUMBER,
+        "number": recipient,
         "presence": "composing",
         "delay": delay_ms,
     }
@@ -102,9 +111,9 @@ def send_whatsapp(
     except requests.RequestException as e:
         logger.warning("Presence signal failed (continuing): %s", e)
 
-    # Send actual message immediately (presence shows "typing…" while this sends)
+    # Send actual message immediately (presence shows "typingÃ¢â‚¬Â¦" while this sends)
     text_payload = {
-        "number": _WHATSAPP_NUMBER,
+        "number": recipient,
         "text": full_text,
     }
     try:
@@ -121,6 +130,7 @@ def send_whatsapp_document(
     file_path: str,
     caption: str = "",
     mimetype: str = "application/pdf",
+    number: str | None = None,
 ) -> bool:
     """
     Send a document file via WhatsApp using the Evolution API sendMedia endpoint.
@@ -136,7 +146,7 @@ def send_whatsapp_document(
 
     Returns
     -------
-    bool — True if sent successfully, False otherwise.
+    bool Ã¢â‚¬â€ True if sent successfully, False otherwise.
     """
     if not _WHATSAPP_API_KEY:
         logger.error("Whatsapp API Key not configured (WHATSAPP_API_KEY).")
@@ -144,6 +154,11 @@ def send_whatsapp_document(
 
     if not file_path or not os.path.isfile(file_path):
         logger.warning("WhatsApp document file not found: %s", file_path)
+        return False
+
+    recipient = number or _WHATSAPP_NUMBER
+    if not recipient:
+        logger.error("No WhatsApp recipient configured.")
         return False
 
     try:
@@ -161,7 +176,7 @@ def send_whatsapp_document(
     }
 
     payload = {
-        "number": _WHATSAPP_NUMBER,
+        "number": recipient,
         "mediatype": "document",
         "mimetype": mimetype,
         "caption": caption,

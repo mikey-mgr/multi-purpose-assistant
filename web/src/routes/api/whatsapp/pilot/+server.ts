@@ -1,9 +1,9 @@
 import { json } from '@sveltejs/kit';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { getDb } from '../../../../lib/server/db';
-import { whatsappPilot } from '../../../../lib/server/db/schema';
+import { profiles, whatsappPilot } from '../../../../lib/server/db/schema';
 import { normalizePhone } from '../../../../lib/server/whatsapp';
 import { rateLimit, rateLimitKey, tooManyRequests } from '../../../../lib/server/rate-limit';
 
@@ -55,13 +55,18 @@ export const POST: RequestHandler = async (event) => {
 		});
 	}
 
-	const countRows = await db
-		.select({ count: sql<number>`count(*)::int` })
+	const usedRows = await db
+		.select({ slot: whatsappPilot.slot })
 		.from(whatsappPilot)
 		.where(eq(whatsappPilot.status, 'active'));
-	const active = countRows[0]?.count ?? 0;
-
-	const slot = active < PILOT_SLOTS ? active + 1 : null;
+	const used = new Set(usedRows.map((row) => row.slot).filter((slot) => slot !== null));
+	let slot: number | null = null;
+	for (let candidate = 1; candidate <= PILOT_SLOTS; candidate += 1) {
+		if (!used.has(candidate)) {
+			slot = candidate;
+			break;
+		}
+	}
 	const status = slot ? 'active' : 'waitlist';
 
 	try {
@@ -79,4 +84,20 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	return json({ phone, slot, status });
+};
+
+export const DELETE: RequestHandler = async (event) => {
+	if (!event.locals.user) {
+		return json({ error: 'Unauthorized' }, { status: 401 });
+	}
+	const limit = await rateLimit(rateLimitKey(event, 'whatsapp:pilot:optout'), 5, 3600);
+	if (!limit.allowed) return tooManyRequests(limit);
+
+	const db = await getDb();
+	await db.delete(whatsappPilot).where(eq(whatsappPilot.userId, event.locals.user.id));
+	await db
+		.update(profiles)
+		.set({ whatsappPromptDismissedAt: new Date() })
+		.where(eq(profiles.userId, event.locals.user.id));
+	return json({ ok: true, optedOut: true });
 };

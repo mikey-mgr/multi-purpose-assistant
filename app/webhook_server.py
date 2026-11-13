@@ -41,6 +41,12 @@ _EVOLUTION_WEBHOOK_URL = settings.EVOLUTION_WEBHOOK_URL
 _MATCH_TRIGGER_SECRET = settings.MATCH_TRIGGER_SECRET
 _MATCH_TRIGGER_HEADER = "x-match-trigger-secret"
 
+# The web app owns matching, generation and delivery. Parsed WhatsApp jobs are
+# posted here instead of being processed by the legacy Prefect flows.
+_WEB_INGEST_URL = os.getenv(
+    "WEB_INGEST_URL", "https://mukana.mikeyverse.co.zw/api/whatsapp/ingest"
+)
+
 
 async def _register_evolution_webhook() -> bool:
     """Idempotently register this receiver on the configured Evolution instance."""
@@ -96,6 +102,41 @@ app = FastAPI(
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
+
+def _resolve_sender(key: dict) -> tuple[str | None, str]:
+    """Return (jid, reason). jid is None when this is not a personal chat.
+
+    WhatsApp now delivers many personal chats as "<id>@lid" and puts the phone
+    number in remoteJidAlt. Treating every non-@s.whatsapp.net JID as a group
+    dropped real users, while @g.us ids were read as phone numbers.
+    """
+    remote = (key or {}).get("remoteJid") or ""
+    alt = (key or {}).get("remoteJidAlt") or ""
+
+    if not remote and not alt:
+        return None, "no_jid"
+
+    for suffix in ("@g.us", "@broadcast", "@newsletter", "@status"):
+        if remote.endswith(suffix):
+            return None, "group"
+
+    if remote.endswith("@s.whatsapp.net") or remote.endswith("@c.us"):
+        return remote, "ok"
+    if alt.endswith("@s.whatsapp.net") or alt.endswith("@c.us"):
+        # A linked-device chat: remoteJidAlt carries the real phone number.
+        return alt, "ok"
+    if remote.endswith("@lid"):
+        # Pure LID with no phone alternative; we cannot match it to an account.
+        return None, "lid_only"
+
+    return None, "unsupported_jid"
+
+
+def _jid_to_phone(jid: str) -> str:
+    """Produce the 2637... canonical form used by the pilot table."""
+    digits = "".join(ch for ch in jid.split("@")[0] if ch.isdigit())
+    return f"263{digits[1:]}" if digits.startswith("0") else digits
+
 
 def _is_allowed_number(phone_number: str) -> bool:
     """Check if a normalized phone number matches the configured allowlist."""
@@ -159,18 +200,24 @@ async def evolution_webhook(request: Request, background_tasks: BackgroundTasks)
         logger.info("Skipping own message (fromMe=true)")
         return JSONResponse(status_code=200, content={"status": "filtered_own"})
 
-    # Filter: only individual WhatsApp chats (@s.whatsapp.net)
-    if not remote_jid.endswith("@s.whatsapp.net"):
-        logger.debug("Skipping non-individual chat: %s", remote_jid)
-        return JSONResponse(status_code=200, content={"status": "filtered_group"})
+    # Resolve who actually wrote to us. Personal chats may arrive as "@lid" with
+    # the phone number in remoteJidAlt; groups are never users.
+    sender_jid, reason = _resolve_sender(key)
+    if not sender_jid:
+        logger.info("Skipping message (%s): remoteJid=%s", reason, remote_jid)
+        return JSONResponse(status_code=200, content={"status": f"filtered_{reason}"})
 
-    # Filter: only allowed phone numbers
-    phone_number = remote_jid.split("@")[0]
+    remote_jid = sender_jid
+    phone_number = _jid_to_phone(sender_jid)
     if not _is_allowed_number(phone_number):
-        logger.debug("Skipping message from non-allowed number: %s", phone_number)
+        logger.info("Skipping message from non-pilot number: %s", phone_number)
         return JSONResponse(status_code=200, content={"status": "filtered_number"})
 
     logger.info("Received message from %s (type=%s)", phone_number, message_type)
+
+    # Record the message before doing any work, so history is complete even if
+    # parsing later fails.
+    _log_inbound({"phone": phone_number}, payload)
 
     # ── Handle image messages ────────────────────────────────────────
     if message_type == "imageMessage" or message.get("imageMessage"):
@@ -196,7 +243,7 @@ async def evolution_webhook(request: Request, background_tasks: BackgroundTasks)
             logger.warning("Image too large: %d bytes", len(decoded))
             return JSONResponse(status_code=200, content={"status": "image_too_large"})
 
-        background_tasks.add_task(_run_image_flow, image_base64, mimetype)
+        background_tasks.add_task(_run_image_flow, image_base64, mimetype, remote_jid)
         return JSONResponse(status_code=200, content={"status": "image_accepted"})
 
     # ── Handle text messages ─────────────────────────────────────────
@@ -210,7 +257,7 @@ async def evolution_webhook(request: Request, background_tasks: BackgroundTasks)
         return JSONResponse(status_code=200, content={"status": "unsupported_type"})
 
     logger.info("Processing text message (%d chars) from %s", len(text), phone_number)
-    background_tasks.add_task(_run_text_flow, text)
+    background_tasks.add_task(_run_text_flow, text, remote_jid)
     return JSONResponse(status_code=200, content={"status": "text_accepted"})
 
 
@@ -247,7 +294,8 @@ async def whatsapp_image_webhook(request: Request, background_tasks: BackgroundT
     if "," in image_base64:
         image_base64 = image_base64.split(",", 1)[1]
 
-    background_tasks.add_task(_run_image_flow, image_base64, mimetype)
+    legacy_sender = body.get("sender") or body.get("number") or None
+    background_tasks.add_task(_run_image_flow, image_base64, mimetype, legacy_sender)
     return JSONResponse(status_code=202, content={"status": "accepted"})
 
 
@@ -269,7 +317,8 @@ async def whatsapp_text_webhook(request: Request, background_tasks: BackgroundTa
     if len(text) > 10000:
         return JSONResponse(status_code=400, content={"error": "Text too long (max 10000 chars)"})
 
-    background_tasks.add_task(_run_text_flow, text)
+    legacy_text_sender = body.get("sender") or body.get("number") or None
+    background_tasks.add_task(_run_text_flow, text, legacy_text_sender)
     return JSONResponse(status_code=202, content={"status": "accepted"})
 
 
@@ -332,50 +381,119 @@ async def health():
 
 # ── Background runners ─────────────────────────────────────────────────
 
-def _run_image_flow(image_base64: str, mimetype: str):
-    from prefect_flows.deployment import _DEFAULTS
-    from prefect_flows.whatsapp_job_flow import process_whatsapp_job
-
-    process_whatsapp_job(
-        image_base64=image_base64,
-        mimetype=mimetype,
-        user_id=_DEFAULTS["user_id"],
-        generate_model=_DEFAULTS["generate_model"],
-        generate_provider=_DEFAULTS["generate_provider"],
-        generate_fallback_model=_DEFAULTS["generate_fallback_model"],
-        generate_fallback_provider=_DEFAULTS["generate_fallback_provider"],
-    )
-    logger.info("Image flow completed.")
+_WEB_FORWARD_URL = os.getenv(
+    "WHATSAPP_FORWARD_URL", "https://mukana.mikeyverse.co.zw/api/webhooks/whatsapp"
+)
 
 
-def _run_match_flow(user_id: str, match_since, limit: int):
-    from prefect_flows.job_pipeline import match_jobs_flow
+def _log_inbound(payload: dict, payload_raw: dict) -> None:
+    """Record the message so the dashboard shows the same history the app has.
 
+    Best effort: a logging failure must never stop a job from being ingested.
+    """
+    if not _WEB_FORWARD_URL or not _WEBHOOK_SECRET:
+        return
     try:
-        match_jobs_flow(
-            user_id=user_id,
-            limit=limit,
-            match_since=match_since,
-            chain_next=False,
-            outbound_enabled=False,
+        httpx.post(
+            _WEB_FORWARD_URL,
+            headers={
+                "Content-Type": "application/json",
+                _WEBHOOK_SECRET_HEADER: _WEBHOOK_SECRET,
+            },
+            json=payload_raw,
+            timeout=20,
         )
     except Exception:
-        logger.exception("Match run failed for user %s", user_id)
+        logger.exception("Could not log inbound WhatsApp message")
 
 
-def _run_text_flow(text: str):
-    from prefect_flows.deployment import _DEFAULTS
-    from prefect_flows.whatsapp_job_flow import process_whatsapp_text
+def _ingest(payload: dict, label: str) -> dict | None:
+    """Forward a raw WhatsApp message to the web pipeline, which parses and matches it."""
+    if not _WEB_INGEST_URL or not _WEBHOOK_SECRET:
+        logger.error("Web ingest is not configured; dropping %s", label)
+        return None
 
-    process_whatsapp_text(
-        text=text,
-        user_id=_DEFAULTS["user_id"],
-        generate_model=_DEFAULTS["generate_model"],
-        generate_provider=_DEFAULTS["generate_provider"],
-        generate_fallback_model=_DEFAULTS["generate_fallback_model"],
-        generate_fallback_provider=_DEFAULTS["generate_fallback_provider"],
+    try:
+        response = httpx.post(
+            _WEB_INGEST_URL,
+            headers={
+                "Content-Type": "application/json",
+                _WEBHOOK_SECRET_HEADER: _WEBHOOK_SECRET,
+            },
+            json=payload,
+            timeout=300,
+        )
+        if response.status_code >= 400:
+            logger.error(
+                "Web ingest rejected %s (%s): %s",
+                label,
+                response.status_code,
+                response.text[:400],
+            )
+            return None
+        logger.info("Web ingest accepted %s: %s", label, response.text[:300])
+        return response.json()
+    except Exception:
+        logger.exception("Web ingest failed for %s", label)
+        return None
+
+
+def _confirmation(job: dict) -> str:
+    company = job.get("company")
+    suffix = f" at {company}" if company else ""
+    return f"📥 Added *{job['title']}*{suffix}. Matching and preparing your application now."
+
+
+def _run_image_flow(image_base64: str, mimetype: str, sender: str | None = None):
+    result = _ingest(
+        {"image_base64": image_base64, "mimetype": mimetype, "sender": sender}, "image job"
     )
-    logger.info("Text flow completed.")
+    if result is None:
+        _notify("⚠️ I could not read that job posting. Please try again.", sender)
+        return
+    job = result.get("parsed")
+    if not job:
+        logger.info("Image was not a job posting; ignoring")
+        return
+    if result.get("ok") is False:
+        _notify(_not_registered_message(), sender)
+        return
+    _notify(_confirmation(job), sender)
+
+
+def _run_text_flow(text: str, sender: str | None = None):
+    result = _ingest({"text": text, "sender": sender}, "text job")
+    if result is None:
+        _notify("⚠️ I could not read that job posting. Please try again.", sender)
+        return
+    job = result.get("parsed")
+    if not job:
+        logger.info("Text was not a job posting; ignoring")
+        return
+    if result.get("ok") is False:
+        _notify(_not_registered_message(), sender)
+        return
+    _notify(_confirmation(job), sender)
+
+
+def _not_registered_message() -> str:
+    return (
+        "This number is not linked to a Mukana account yet. "
+        "Join the WhatsApp pilot from your dashboard, then resend the job posting."
+    )
+
+
+def _notify(message: str, sender: str | None = None) -> None:
+    """Best-effort WhatsApp confirmation back to the number that wrote to us."""
+    if not _EXPECTED_API_KEY:
+        logger.warning("Skipping WhatsApp confirmation: API key not configured")
+        return
+    try:
+        from app.whatsapp_notifier import send_whatsapp
+
+        send_whatsapp(text=message, number=sender)
+    except Exception:
+        logger.exception("Could not send WhatsApp confirmation")
 
 
 if __name__ == "__main__":

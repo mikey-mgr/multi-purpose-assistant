@@ -42,8 +42,27 @@ export const POST: RequestHandler = async (event) => {
 		.where(eq(whatsappPilot.phone, message.phone))
 		.limit(1);
 
+	// The pilot table stores some numbers in local form (0778...) and this
+	// lookup uses canonical form (263778...), so retry on the local variant.
+	let entry = pilot[0];
+	if (!entry && message.phone.startsWith('263')) {
+		const local = `0${message.phone.slice(3)}`;
+		const alt = await db
+			.select()
+			.from(whatsappPilot)
+			.where(eq(whatsappPilot.phone, local))
+			.limit(1);
+		entry = alt[0];
+	}
+
+	// Anyone who has not joined the pilot is ignored entirely: storing their
+	// messages would mean holding a stranger's chat history for no reason.
+	if (!entry) {
+		return json({ ok: true, ignored: true, reason: 'not_in_pilot' });
+	}
+
 	await db.insert(whatsappMessages).values({
-		userId: pilot[0]?.status === 'active' ? pilot[0].userId : null,
+		userId: entry.status === 'active' ? entry.userId : null,
 		phone: message.phone,
 		direction: 'inbound',
 		body: message.body,
@@ -59,8 +78,8 @@ export const POST: RequestHandler = async (event) => {
 
 	return json({
 		ok: true,
-		matched: Boolean(pilot[0]),
-		pilotStatus: pilot[0]?.status ?? null,
-		slot: pilot[0]?.slot ?? null
+		matched: true,
+		pilotStatus: entry.status,
+		slot: entry.slot
 	});
 };
