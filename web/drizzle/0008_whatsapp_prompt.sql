@@ -1,0 +1,1 @@
+ALTER TABLE "profiles" ADD COLUMN "whatsapp_prompt_dismissed_at" timestamp with time zone;

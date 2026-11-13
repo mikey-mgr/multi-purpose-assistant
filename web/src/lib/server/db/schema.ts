@@ -13,6 +13,7 @@ import {
 	uniqueIndex,
 	uuid
 } from 'drizzle-orm/pg-core';
+import type { CvTemplate, ProfileReference, ResumeProfile } from '../resume/types';
 
 export const user = pgTable('user', {
 	id: text('id').primaryKey(),
@@ -99,6 +100,14 @@ export const profiles = pgTable('profiles', {
 		.notNull()
 		.default(sql`'{}'::text[]`),
 	matchMode: text('match_mode').notNull().default('balanced'),
+	resumeText: text('resume_text'),
+	resumeData: jsonb('resume_data').$type<ResumeProfile | null>(),
+	phone: text('phone'),
+	linkedinUrl: text('linkedin_url'),
+	cvTemplate: text('cv_template').$type<CvTemplate>().notNull().default('harvard'),
+	references: jsonb('references').$type<ProfileReference[]>().notNull().default(sql`'[]'::jsonb`),
+	referencesEnabled: boolean('references_enabled').notNull().default(false),
+	whatsappPromptDismissedAt: timestamp('whatsapp_prompt_dismissed_at', { withTimezone: true }),
 	onboardingCompleted: boolean('onboarding_completed').notNull().default(false),
 	legacyUserId: text('legacy_user_id'),
 	matchSince: timestamp('match_since', { withTimezone: true }),
@@ -151,6 +160,20 @@ export type KitAttachment = {
 	contentBase64: string;
 };
 
+export type ApplicationKitMetadata = {
+	selectedField: string | null;
+	subjectTemplate: string | null;
+	recipients: Array<{ email: string; field: string | null }>;
+	requiredDocuments: string[];
+	combineAttachments: boolean;
+	blockers: string[];
+	confidence: number;
+	autoSendReady: boolean;
+	merged: boolean;
+	notes: string | null;
+	forced?: boolean;
+};
+
 export const jobs = pgTable(
 	'jobs',
 	{
@@ -169,13 +192,55 @@ export const jobs = pgTable(
 		category: text('category'),
 		remote: text('remote'),
 		applyInstructions: text('apply_instructions'),
+		/**
+		 * Set when a user submits a job themselves (WhatsApp forward). A job with an
+		 * owner is only ever matched to that owner; scraped jobs leave this null.
+		 */
+		ownerUserId: text('owner_user_id'),
 		scrapedAt: timestamp('scraped_at', { withTimezone: true }).notNull().defaultNow(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [
 		index('jobs_date_posted_idx').on(table.datePosted),
 		index('jobs_category_idx').on(table.category),
-		index('jobs_company_idx').on(table.company)
+		index('jobs_company_idx').on(table.company),
+		uniqueIndex('jobs_source_url_idx').on(table.sourceUrl)
+	]
+);
+
+export const agents = pgTable('agents', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
+	name: text('name').notNull(),
+	kind: text('kind').notNull().default('scraper'),
+	keyHash: text('key_hash').notNull().unique(),
+	status: text('status').notNull().default('active'),
+	lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	revokedAt: timestamp('revoked_at', { withTimezone: true })
+});
+
+export const agentTasks = pgTable(
+	'agent_tasks',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		kind: text('kind').notNull(),
+		status: text('status').notNull().default('pending'),
+		payload: jsonb('payload')
+			.$type<Record<string, unknown>>()
+			.notNull()
+			.default(sql`'{}'::jsonb`),
+		result: jsonb('result').$type<Record<string, unknown> | null>(),
+		agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
+		attempts: integer('attempts').notNull().default(0),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		claimedAt: timestamp('claimed_at', { withTimezone: true }),
+		leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+		completedAt: timestamp('completed_at', { withTimezone: true })
+	},
+	(table) => [
+		index('agent_tasks_kind_status_idx').on(table.kind, table.status),
+		index('agent_tasks_agent_id_idx').on(table.agentId)
 	]
 );
 
@@ -234,6 +299,23 @@ export const documents = pgTable(
 	]
 );
 
+export const userFiles = pgTable(
+	'user_files',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		filename: text('filename').notNull(),
+		contentType: text('content_type').notNull(),
+		purpose: text('purpose').notNull().default('document'),
+		size: integer('size').notNull(),
+		r2Key: text('r2_key').notNull().unique(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [index('user_files_user_id_idx').on(table.userId)]
+);
+
 export const oauthAccounts = pgTable(
 	'oauth_accounts',
 	{
@@ -280,6 +362,7 @@ export const applicationKits = pgTable(
 			.$type<KitAttachment[]>()
 			.notNull()
 			.default(sql`'[]'::jsonb`),
+		metadata: jsonb('metadata').$type<ApplicationKitMetadata | null>(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [index('application_kits_user_id_idx').on(table.userId)]
