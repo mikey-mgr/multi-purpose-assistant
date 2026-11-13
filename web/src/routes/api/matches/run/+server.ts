@@ -43,33 +43,41 @@ export const POST: RequestHandler = async (event) => {
 		.where(eq(profiles.userId, event.locals.user.id))
 		.limit(1);
 
-	if (!profile[0]?.legacyUserId) {
-		return json(
-			{ error: 'This account is not linked to the matching pipeline' },
-			{ status: 409 }
+	const run = fetch(target, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			'x-match-trigger-secret': secret
+		},
+		body: JSON.stringify({
+			user_id: profile[0]?.legacyUserId ?? event.locals.user.id,
+			web_user_id: event.locals.user.id,
+			legacy_user_id: profile[0]?.legacyUserId ?? null,
+			match_since: profile[0]?.matchSince?.toISOString() ?? null,
+			limit: 50
+		}),
+		signal: AbortSignal.timeout(60000)
+	});
+
+	if (event.platform?.ctx?.waitUntil) {
+		event.platform.ctx.waitUntil(
+			run
+				.then((response) => {
+					if (!response.ok) {
+						console.error('Matching service returned', response.status);
+					}
+				})
+				.catch((error) => console.error('Matching service unreachable', error))
 		);
-	}
-
-	try {
-		const response = await fetch(target, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'x-match-trigger-secret': secret
-			},
-			body: JSON.stringify({
-				user_id: profile[0].legacyUserId,
-				match_since: profile[0].matchSince?.toISOString() ?? null,
-				limit: 50
-			}),
-			signal: AbortSignal.timeout(15000)
-		});
-
-		if (!response.ok) {
-			return json({ error: 'Matching service rejected the request' }, { status: 502 });
+	} else {
+		try {
+			const response = await run;
+			if (!response.ok) {
+				return json({ error: 'Matching service rejected the request' }, { status: 502 });
+			}
+		} catch {
+			return json({ error: 'Matching service unreachable' }, { status: 502 });
 		}
-	} catch {
-		return json({ error: 'Matching service unreachable' }, { status: 502 });
 	}
 
 	return json(
