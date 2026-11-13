@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { getDb } from '../../lib/server/db';
 import { jobMatches, jobs } from '../../lib/server/db/schema';
 import { publicSummary } from '../../lib/server/sanitize';
@@ -17,12 +17,13 @@ export const load = async ({ locals, url }) => {
 	const userId = locals.user.id;
 
 	const userFilter = eq(jobMatches.userId, userId);
+	const fresh = or(isNull(jobs.expires), sql`${jobs.expires} >= current_date`);
 	const where =
 		status === 'all'
-			? userFilter
+			? and(userFilter, fresh)
 			: status === 'active'
-				? and(userFilter, inArray(jobMatches.status, ACTIVE_STATUSES))
-				: and(userFilter, eq(jobMatches.status, status));
+				? and(userFilter, inArray(jobMatches.status, ACTIVE_STATUSES), fresh)
+				: and(userFilter, eq(jobMatches.status, status), fresh);
 
 	const db = await getDb();
 	const [rows, totalRows, statusRows] = await Promise.all([
@@ -45,14 +46,19 @@ export const load = async ({ locals, url }) => {
 			.from(jobMatches)
 			.innerJoin(jobs, eq(jobMatches.jobId, jobs.id))
 			.where(where)
-			.orderBy(desc(jobMatches.score), desc(jobMatches.createdAt))
+			.orderBy(desc(jobMatches.createdAt), desc(jobMatches.score))
 			.limit(PAGE_SIZE)
 			.offset((page - 1) * PAGE_SIZE),
-		db.select({ count: sql<number>`count(*)::int` }).from(jobMatches).where(where),
+		db
+			.select({ count: sql<number>`count(*)::int` })
+			.from(jobMatches)
+			.innerJoin(jobs, eq(jobMatches.jobId, jobs.id))
+			.where(where),
 		db
 			.select({ status: jobMatches.status, count: sql<number>`count(*)::int` })
 			.from(jobMatches)
-			.where(userFilter)
+			.innerJoin(jobs, eq(jobMatches.jobId, jobs.id))
+			.where(and(userFilter, fresh))
 			.groupBy(jobMatches.status)
 	]);
 
@@ -75,6 +81,7 @@ export const load = async ({ locals, url }) => {
 		},
 		matches: rows.map((row) => ({
 			id: row.matchId,
+			matchId: row.matchId,
 			jobId: row.jobId,
 			status: row.status,
 			score: row.score,

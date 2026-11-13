@@ -14,7 +14,7 @@ export function safeFilename(value: string, fallback = 'mukana-application'): st
 	const cleaned = value
 		.normalize('NFKD')
 		.replace(/[^\w.\- ]+/g, '')
-		.replace(/\s+/g, '-')
+		.replace(/\s+/g, ' ')
 		.replace(/-+/g, '-')
 		.replace(/^[-.]+|[-.]+$/g, '')
 		.slice(0, 100);

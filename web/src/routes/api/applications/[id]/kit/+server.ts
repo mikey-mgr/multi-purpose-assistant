@@ -54,6 +54,7 @@ export const GET: RequestHandler = async (event) => {
 			recipient: row.recipient,
 			subject: row.subject,
 			body: row.body,
+			metadata: row.metadata,
 			attachments: row.attachments.map((attachment) => ({
 				name: attachment.name,
 				mime: attachment.mime,

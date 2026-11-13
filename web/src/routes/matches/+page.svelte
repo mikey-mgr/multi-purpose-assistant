@@ -23,15 +23,17 @@
 	let running = $state(false);
 	let notice = $state('');
 
-	async function runMatching() {
+	async function start(path: string, message: string) {
 		running = true;
 		notice = '';
-		const response = await fetch('/api/matches/run', { method: 'POST' });
+		const response = await fetch(path, { method: 'POST' });
 		const result = (await response.json().catch(() => ({}))) as { error?: string };
 		running = false;
-		notice = response.ok
-			? 'Matching started. Refresh in a few minutes to see new results.'
-			: (result.error ?? 'Could not start matching');
+		notice = response.ok ? message : (result.error ?? 'Could not start matching');
+	}
+
+	async function runMatching() {
+		await start('/api/matches/run', 'Matching started. Refresh in a few minutes.');
 	}
 </script>
 
@@ -47,7 +49,7 @@
 			<h1 class="mt-2 text-3xl font-bold tracking-tight text-ink sm:text-4xl">
 				Your application pipeline.
 			</h1>
-			<p class="mt-2 text-sm text-ink-muted">{data.total} matches in this view.</p>
+			<p class="mt-2 text-sm text-ink-muted">{data.total} live matches in this view.</p>
 		</div>
 		<div class="flex flex-wrap items-center gap-2">
 			<button
@@ -58,6 +60,12 @@
 			>
 				{running ? 'Starting...' : 'Run matching'}
 			</button>
+			<a
+				href="/applications"
+				class="inline-flex h-10 items-center rounded-full border border-line-strong bg-surface px-4 text-sm font-semibold text-ink hover:bg-surface-2"
+			>
+				Application kits
+			</a>
 			<a
 				href="/dashboard"
 				class="inline-flex h-10 items-center rounded-full border border-line-strong bg-surface px-4 text-sm font-semibold text-ink hover:bg-surface-2"
@@ -101,14 +109,17 @@
 	{:else}
 		<div class="mt-5 space-y-3">
 			{#each data.matches as match}
-				<article class="rounded-2xl border border-line bg-surface p-4 sm:p-5">
+				<article
+					id={`match-${match.id}`}
+					class="scroll-mt-24 rounded-2xl border border-line bg-surface p-4 sm:p-5"
+				>
 					<div class="flex flex-wrap items-start justify-between gap-3">
 						<div class="min-w-0">
 							<p class="text-xs font-semibold uppercase tracking-[0.16em] text-ink-muted">
 								{match.company}
 							</p>
 							<h2 class="mt-1 font-display text-lg font-bold leading-tight text-ink">
-								<a href={`/jobs/${match.jobId}`} class="hover:text-link">{match.title}</a>
+								<a href={`/matches/${match.matchId}`} class="hover:text-link">{match.title}</a>
 							</h2>
 							<p class="mt-1 text-xs text-ink-muted">
 								{match.location}{match.type ? ` - ${match.type}` : ''}
@@ -137,7 +148,9 @@
 									? 'External application'
 									: 'Application details pending'}
 						</span>
-						<a href={`/jobs/${match.jobId}`} class="font-semibold text-link">View role</a>
+						<a href={`/matches/${match.matchId}`} class="font-semibold text-link">
+							Open application
+						</a>
 					</div>
 				</article>
 			{/each}
