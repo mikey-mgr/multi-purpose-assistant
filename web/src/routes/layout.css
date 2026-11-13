@@ -1,4 +1,4 @@
-﻿@import 'tailwindcss';
+@import 'tailwindcss';
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -99,6 +99,13 @@
 		font-family: var(--font-body-stack);
 		-webkit-font-smoothing: antialiased;
 		text-rendering: optimizeLegibility;
+		/* Long unbroken strings (emails, URLs, job titles) must never widen the
+		   page: that pushes the fixed bottom nav and causes a sideways scroll. */
+		overflow-x: hidden;
+	}
+
+	#main {
+		min-width: 0;
 	}
 
 	h1,

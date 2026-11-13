@@ -1,5 +1,6 @@
 import { redirect } from '@sveltejs/kit';
-import { and, desc, eq, ilike, isNotNull, or, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { getDb } from '../../lib/server/db';
 import { jobs } from '../../lib/server/db/schema';
 import { publicSummary } from '../../lib/server/sanitize';
@@ -12,21 +13,29 @@ export const load = async ({ locals, url }) => {
 	const q = (url.searchParams.get('q') ?? '').trim().slice(0, 100);
 	const category = (url.searchParams.get('category') ?? '').trim().slice(0, 100);
 	const location = (url.searchParams.get('location') ?? '').trim().slice(0, 100);
+	const fresh = url.searchParams.get('fresh') === 'today';
 	const page = Math.max(1, Number(url.searchParams.get('page') ?? 1) || 1);
 	const offset = (page - 1) * PAGE_SIZE;
 
-	const filters = [];
+	const today = new Date();
+	today.setHours(0, 0, 0, 0);
+	const filters: SQL[] = [or(isNull(jobs.expires), gte(jobs.expires, today.toISOString().slice(0, 10)))!];
 	if (q) {
 		filters.push(
 			or(
 				ilike(jobs.title, `%${q}%`),
 				ilike(jobs.company, `%${q}%`),
 				ilike(jobs.description, `%${q}%`)
-			)
+			)!
 		);
 	}
 	if (category) filters.push(eq(jobs.category, category));
 	if (location) filters.push(ilike(jobs.location, `%${location}%`));
+	if (fresh) {
+		const start = new Date();
+		start.setHours(0, 0, 0, 0);
+		filters.push(gte(jobs.scrapedAt, start));
+	}
 	const where = filters.length ? and(...filters) : undefined;
 
 	const db = await getDb();
@@ -42,7 +51,8 @@ export const load = async ({ locals, url }) => {
 				datePosted: jobs.datePosted,
 				category: jobs.category,
 				remote: jobs.remote,
-				description: jobs.description
+				description: jobs.description,
+				addedAt: jobs.scrapedAt
 			})
 			.from(jobs)
 			.where(where)
@@ -71,6 +81,7 @@ export const load = async ({ locals, url }) => {
 			datePosted: row.datePosted,
 			category: row.category,
 			remote: row.remote,
+			addedAt: row.addedAt?.toISOString() ?? null,
 			summary: publicSummary(row.description)
 		})),
 		total,
@@ -79,6 +90,7 @@ export const load = async ({ locals, url }) => {
 		q,
 		category,
 		location,
+		fresh,
 		categories: categoryRows.map((row) => row.category).filter(Boolean) as string[]
 	};
 };

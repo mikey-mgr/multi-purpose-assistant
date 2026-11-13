@@ -8,12 +8,14 @@
 		<meta name="theme-color" content="#121110" media="(prefers-color-scheme: dark)" />
 		<link rel="manifest" href="/manifest.webmanifest" />
 		<link rel="icon" href="/icon.svg" type="image/svg+xml" />
-		<link rel="apple-touch-icon" href="/icon.svg" />
+		<link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192" />
+		<link rel="icon" href="/icon-512.png" type="image/png" sizes="512x512" />
+		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 		<script>
 			try {
 				const stored = localStorage.getItem('mukana-theme');
 				const dark = stored
-					 stored === 'dark'
+					? stored === 'dark'
 					: window.matchMedia('(prefers-color-scheme: dark)').matches;
 				document.documentElement.classList.toggle('dark', dark);
 				const connection = navigator.connection;

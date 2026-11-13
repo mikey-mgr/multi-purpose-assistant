@@ -1,11 +1,19 @@
 import { json } from '@sveltejs/kit';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
+import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { getDb } from '../../../../lib/server/db';
-import { documents, jobs } from '../../../../lib/server/db/schema';
+import { documents, jobMatches, jobs } from '../../../../lib/server/db/schema';
 import { rateLimit, rateLimitKey, tooManyRequests } from '../../../../lib/server/rate-limit';
+import { rebuildApplication } from '../../../../lib/server/resume/rebuild';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const patchInput = z
+	.object({
+		content: z.string().max(60000)
+	})
+	.strict();
 
 export const GET: RequestHandler = async (event) => {
 	if (!event.locals.user) {
@@ -19,7 +27,7 @@ export const GET: RequestHandler = async (event) => {
 	if (!limit.allowed) return tooManyRequests(limit);
 
 	const db = await getDb();
-	const row = await db
+	const rows = await db
 		.select({
 			id: documents.id,
 			documentType: documents.documentType,
@@ -38,26 +46,90 @@ export const GET: RequestHandler = async (event) => {
 		.where(and(eq(documents.id, event.params.id), eq(documents.userId, event.locals.user.id)))
 		.limit(1);
 
-	if (!row[0]) {
+	if (!rows[0]) {
 		return json({ error: 'Not found' }, { status: 404 });
 	}
 
 	return json(
 		{
-			id: row[0].id,
-			type: row[0].documentType,
-			content: row[0].content,
-			rendercvYaml: row[0].rendercvYaml,
-			promptName: row[0].promptName,
-			model: row[0].model,
-			tokensUsed: row[0].tokensUsed,
-			createdAt: row[0].createdAt,
-			job: {
-				id: row[0].jobId,
-				title: row[0].jobTitle,
-				company: row[0].company
-			}
+			id: rows[0].id,
+			type: rows[0].documentType,
+			content: rows[0].content,
+			rendercvYaml: rows[0].rendercvYaml,
+			promptName: rows[0].promptName,
+			model: rows[0].model,
+			tokensUsed: rows[0].tokensUsed,
+			createdAt: rows[0].createdAt,
+			job: { id: rows[0].jobId, title: rows[0].jobTitle, company: rows[0].company }
 		},
 		{ headers: { 'Cache-Control': 'private, max-age=60' } }
 	);
+};
+
+export const PATCH: RequestHandler = async (event) => {
+	if (!event.locals.user) {
+		return json({ error: 'Unauthorized' }, { status: 401 });
+	}
+	if (!UUID_RE.test(event.params.id)) {
+		return json({ error: 'Not found' }, { status: 404 });
+	}
+
+	const limit = await rateLimit(rateLimitKey(event, 'documents:patch'), 20, 300);
+	if (!limit.allowed) return tooManyRequests(limit);
+
+	let body: unknown;
+	try {
+		body = await event.request.json();
+	} catch {
+		return json({ error: 'Invalid JSON body' }, { status: 400 });
+	}
+
+	const parsed = patchInput.safeParse(body);
+	if (!parsed.success) {
+		return json({ error: 'Invalid document', issues: parsed.error.flatten() }, { status: 400 });
+	}
+
+	const db = await getDb();
+	const rows = await db
+		.select()
+		.from(documents)
+		.where(and(eq(documents.id, event.params.id), eq(documents.userId, event.locals.user.id)))
+		.limit(1);
+
+	const document = rows[0];
+	if (!document) return json({ error: 'Not found' }, { status: 404 });
+	if (document.documentType === 'resume') {
+		return json(
+			{ error: 'CVs are rendered from structured data. Edit in the CV builder.' },
+			{ status: 400 }
+		);
+	}
+
+	await db
+		.update(documents)
+		.set({ content: parsed.data.content })
+		.where(eq(documents.id, document.id));
+
+	// Roll the saved edit into the matching application kit.
+	let rebuild: Awaited<ReturnType<typeof rebuildApplication>> | null = null;
+	if (document.jobId) {
+		const matchRows = await db
+			.select({ id: jobMatches.id })
+			.from(jobMatches)
+			.where(
+				and(
+					eq(jobMatches.userId, event.locals.user.id),
+					eq(jobMatches.jobId, document.jobId)
+				)
+			)
+			.orderBy(desc(jobMatches.createdAt))
+			.limit(1);
+		if (matchRows[0]) {
+			rebuild = await rebuildApplication(matchRows[0].id, event.locals.user.id, {
+				coverLetterOverride: parsed.data.content
+			});
+		}
+	}
+
+	return json({ ok: true, documentId: document.id, rebuild });
 };

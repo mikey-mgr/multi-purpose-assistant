@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '../../lib/server/db';
-import { documents, jobs } from '../../lib/server/db/schema';
+import { documents, jobs, userFiles } from '../../lib/server/db/schema';
 
 const PAGE_SIZE = 30;
 const TYPES = ['resume', 'cover_letter', 'interview_prep'];
@@ -16,7 +16,7 @@ export const load = async ({ locals, url }) => {
 	const where = type === 'all' ? userFilter : and(userFilter, eq(documents.documentType, type));
 
 	const db = await getDb();
-	const [rows, totalRows, typeRows] = await Promise.all([
+	const [rows, totalRows, typeRows, fileRows] = await Promise.all([
 		db
 			.select({
 				id: documents.id,
@@ -38,7 +38,13 @@ export const load = async ({ locals, url }) => {
 			.select({ type: documents.documentType, count: sql<number>`count(*)::int` })
 			.from(documents)
 			.where(userFilter)
-			.groupBy(documents.documentType)
+			.groupBy(documents.documentType),
+		db
+			.select()
+			.from(userFiles)
+			.where(eq(userFiles.userId, locals.user.id))
+			.orderBy(desc(userFiles.createdAt))
+			.limit(20)
 	]);
 
 	const counts = new Map(typeRows.map((row) => [row.type, row.count]));
@@ -63,6 +69,14 @@ export const load = async ({ locals, url }) => {
 			jobId: row.jobId,
 			jobTitle: row.jobTitle,
 			company: row.company
+		})),
+		files: fileRows.map((row) => ({
+			id: row.id,
+			filename: row.filename,
+			contentType: row.contentType,
+			purpose: row.purpose,
+			size: row.size,
+			createdAt: row.createdAt
 		}))
 	};
 };

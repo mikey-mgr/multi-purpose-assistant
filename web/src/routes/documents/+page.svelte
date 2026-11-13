@@ -3,6 +3,38 @@
 
 	let { data }: { data: PageData } = $props();
 
+	let fileInput: HTMLInputElement | undefined = $state();
+	let uploading = $state(false);
+	let uploadError = $state('');
+	let purpose = $state('resume');
+
+	async function uploadFile(event: SubmitEvent) {
+		event.preventDefault();
+		uploadError = '';
+		const file = fileInput?.files?.[0];
+		if (!file) {
+			uploadError = 'Choose a file first.';
+			return;
+		}
+		uploading = true;
+		const body = new FormData();
+		body.append('file', file);
+		body.append('purpose', purpose);
+		const response = await fetch('/api/files', { method: 'POST', body });
+		const result = (await response.json()) as { error?: string };
+		uploading = false;
+		if (!response.ok) {
+			uploadError = result.error ?? 'Upload failed';
+			return;
+		}
+		location.reload();
+	}
+
+	function sizeLabel(bytes: number) {
+		if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
 	const tabs = $derived([
 		{ key: 'all', label: 'All', count: data.counts.all },
 		{ key: 'resume', label: 'CVs', count: data.counts.resume },
@@ -32,13 +64,76 @@
 			</h1>
 			<p class="mt-2 text-sm text-ink-muted">{data.total} documents in this view.</p>
 		</div>
-		<a
-			href="/dashboard"
-			class="inline-flex h-10 items-center rounded-full border border-line-strong bg-surface px-4 text-sm font-semibold text-ink hover:bg-surface-2"
-		>
-			Back to dashboard
-		</a>
+		<div class="flex flex-wrap items-center gap-2">
+			<a
+				href="/applications"
+				class="inline-flex h-10 items-center rounded-full border border-line-strong bg-surface px-4 text-sm font-semibold text-ink hover:bg-surface-2"
+			>
+				Application kits
+			</a>
+			<a
+				href="/dashboard"
+				class="inline-flex h-10 items-center rounded-full border border-line-strong bg-surface px-4 text-sm font-semibold text-ink hover:bg-surface-2"
+			>
+				Back to dashboard
+			</a>
+		</div>
 	</div>
+
+	<section class="mt-6 rounded-2xl border border-line bg-surface p-5">
+		<h2 class="font-display text-lg font-bold text-ink">Upload source files</h2>
+		<p class="mt-1 text-sm text-ink-muted">
+			Add your CV, certificates, transcripts or supporting files. PDF, DOCX, images and text up
+			to 15 MB.
+		</p>
+		<form class="mt-4 flex flex-wrap items-center gap-3" onsubmit={uploadFile}>
+			<input
+				bind:this={fileInput}
+				type="file"
+				accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.txt"
+				class="min-w-0 flex-1 text-sm text-ink"
+				required
+			/>
+			<select
+				bind:value={purpose}
+				class="h-10 rounded-xl border border-line bg-surface px-3 text-sm text-ink"
+			>
+				<option value="resume">Use as my CV</option>
+				<option value="national_id">National ID</option>
+				<option value="document">Supporting document</option>
+			</select>
+			<button
+				type="submit"
+				disabled={uploading}
+				class="inline-flex h-10 items-center rounded-full bg-brand px-4 text-sm font-semibold text-on-brand hover:bg-brand-hover disabled:opacity-60"
+			>
+				{uploading ? 'Uploading...' : 'Upload'}
+			</button>
+		</form>
+		{#if uploadError}
+			<p class="mt-2 text-sm font-medium text-bad" role="alert">{uploadError}</p>
+		{/if}
+		{#if data.files.length}
+			<div class="mt-4 divide-y divide-line rounded-xl border border-line">
+				{#each data.files as file}
+					<div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+						<div class="min-w-0">
+							<p class="truncate text-sm font-medium text-ink">{file.filename}</p>
+							<p class="text-xs text-ink-muted">
+								{file.purpose === 'national_id' ? 'National ID' : sizeLabel(file.size)}
+							</p>
+						</div>
+						<a
+							href={`/api/files/${file.id}`}
+							class="text-sm font-semibold text-link hover:underline"
+						>
+							Download
+						</a>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</section>
 
 	<div class="mt-5 flex gap-2 overflow-x-auto pb-1">
 		{#each tabs as tab}

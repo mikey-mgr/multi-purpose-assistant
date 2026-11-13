@@ -1,58 +1,58 @@
-﻿import type { MatchJob } from '../types';
+import type { MatchJob } from '../types';
 
 export const demoJobs: MatchJob[] = [
 	{
-		id: 'zambezi-graduate-analyst',
-		title: 'Graduate Data Analyst',
-		company: 'Zambezi Digital Bank',
+		id: 'accounts-assistant',
+		title: 'Accounts Assistant',
+		company: 'Harare Retail Group',
 		location: 'Harare, Zimbabwe',
-		salary: 'Competitive graduate package',
-		type: 'Graduate programme',
-		score: 92,
+		salary: 'USD 350 - 450 / month',
+		type: 'Full time',
+		score: 86,
 		summary:
-			'Your SQL, Python and dashboard projects map directly to this team reporting pipeline.',
+			'Your bookkeeping, Excel and reconciliation experience fit this finance team.',
 		reasons: [
-			'Built ETL pipelines and automated reporting in a previous internship',
-			'Strong SQL, Python and dashboard evidence for a graduate programme',
-			'The programme targets 0-2 years experience, matching your level'
+			'Handled cash reconciliations and monthly reports',
+			'Comfortable with Excel formulas and stock records',
+			'Role open to candidates with 1-2 years experience'
 		],
-		skills: ['SQL', 'Python', 'Dashboards', 'ETL', 'Data quality'],
-		gaps: ['No formal banking certification', 'Limited cloud data warehouse experience']
+		skills: ['Bookkeeping', 'Excel', 'Reconciliations', 'Stock records'],
+		gaps: ['No Pastel certification', 'Limited payroll exposure']
 	},
 	{
-		id: 'acacia-mobile-developer',
-		title: 'Mobile Developer',
-		company: 'Acacia Learning Group',
-		location: 'Gweru, Zimbabwe',
-		salary: 'TBA',
+		id: 'sales-representative',
+		title: 'Sales Representative',
+		company: 'Bulawayo Road Distributors',
+		location: 'Harare, Zimbabwe',
+		salary: 'Base + commission',
 		type: 'Full time',
-		score: 88,
+		score: 82,
 		summary:
-			'Flutter, REST APIs and app-store delivery are the core of this role. A completed mobile project is the strongest proof point.',
+			'Your customer service and field sales experience fit this FMCG distributor.',
 		reasons: [
-			'Built and shipped a cross-platform mobile app',
-			'Experience connecting mobile apps to REST APIs',
-			'Comfortable with Git and app-store release flows'
+			'Experience building customer relationships',
+			'Comfortable working to weekly and monthly targets',
+			'Role includes local field travel'
 		],
-		skills: ['Flutter', 'Dart', 'REST APIs', 'Git', 'App-store release'],
-		gaps: ['No native iOS/Android production app', 'No formal mobile certification']
+		skills: ['Field sales', 'Customer service', 'Negotiation', 'Targets'],
+		gaps: ['No formal sales qualification', 'No FMCG product experience']
 	},
 	{
-		id: 'matobo-data-protection',
-		title: 'Data Protection Officer',
-		company: 'Matobo Hospitality Group',
+		id: 'administrative-assistant',
+		title: 'Administrative Assistant',
+		company: 'Avondale Medical Practice',
 		location: 'Harare, Zimbabwe',
-		salary: 'TBA',
+		salary: 'USD 300 - 400 / month',
 		type: 'Full time',
-		score: 76,
+		score: 79,
 		summary:
-			'Compliance and access-control experience is relevant, but the role expects formal privacy or legal experience.',
+			'Your office administration, scheduling and records experience fit this practice.',
 		reasons: [
-			'Handled data-quality and compliance checks',
-			'Practical identity and access management exposure',
-			'Can translate technical controls into policy language'
+			'Experience managing schedules and client records',
+			'Comfortable with Microsoft Office and email',
+			'Role values accuracy and confidentiality'
 		],
-		skills: ['Data governance', 'IAM', 'Compliance', 'Risk assessment'],
-		gaps: ['No privacy law qualification', 'No DPIA or breach-response track record']
+		skills: ['Office administration', 'Scheduling', 'Records', 'MS Office'],
+		gaps: ['No medical reception experience', 'No first-aid certificate']
 	}
 ];

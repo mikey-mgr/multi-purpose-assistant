@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { authClient } from '../../lib/auth-client';
 	import PasswordInput from '../../lib/components/PasswordInput.svelte';
 
@@ -26,6 +26,7 @@
 			return;
 		}
 
+		await invalidateAll();
 		await goto('/onboarding');
 	}
 </script>

@@ -1,10 +1,10 @@
 import { redirect } from '@sveltejs/kit';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { getDb } from '../../lib/server/db';
-import { documents, jobMatches, jobs, profiles } from '../../lib/server/db/schema';
+import { documents, jobMatches, jobs, profiles, whatsappPilot } from '../../lib/server/db/schema';
 import { publicSummary } from '../../lib/server/sanitize';
 
-const ACTIVE_STATUSES = ['matched', 'generated', 'applied', 'waiting'] as const;
+const ATTENTION_STATUSES = ['matched', 'generated'] as const;
 
 function reasonsFrom(value: string | null): string[] {
 	const cleaned = (value ?? '').replace(/\s+/g, ' ').trim();
@@ -34,7 +34,7 @@ export const load = async ({ locals }) => {
 	const userId = locals.user.id;
 	const db = await getDb();
 
-	const [profile, matchRows, statusRows, docRows, docCountRows] = await Promise.all([
+	const [profile, matchRows, statusRows, docRows, docCountRows, pilotRows, pilotCountRows] = await Promise.all([
 		db.select().from(profiles).where(eq(profiles.userId, userId)).limit(1),
 		db
 			.select({
@@ -53,8 +53,14 @@ export const load = async ({ locals }) => {
 			})
 			.from(jobMatches)
 			.innerJoin(jobs, eq(jobMatches.jobId, jobs.id))
-			.where(and(eq(jobMatches.userId, userId), inArray(jobMatches.status, ACTIVE_STATUSES)))
-			.orderBy(desc(jobMatches.score), desc(jobMatches.createdAt))
+			.where(
+				and(
+					eq(jobMatches.userId, userId),
+					inArray(jobMatches.status, ATTENTION_STATUSES),
+					or(isNull(jobs.expires), sql`${jobs.expires} >= current_date`)
+				)
+			)
+			.orderBy(desc(jobMatches.createdAt), desc(jobMatches.score))
 			.limit(3),
 		db
 			.select({ status: jobMatches.status, count: sql<number>`count(*)::int` })
@@ -78,12 +84,21 @@ export const load = async ({ locals }) => {
 		db
 			.select({ count: sql<number>`count(*)::int` })
 			.from(documents)
-			.where(eq(documents.userId, userId))
+			.where(eq(documents.userId, userId)),
+		db
+			.select()
+			.from(whatsappPilot)
+			.where(eq(whatsappPilot.userId, userId))
+			.limit(1),
+		db
+			.select({ count: sql<number>`count(*)::int` })
+			.from(whatsappPilot)
+			.where(eq(whatsappPilot.status, 'active'))
 	]);
 
 	const counts = new Map(statusRows.map((row) => [row.status, row.count]));
 	const applied = counts.get('applied') ?? 0;
-	const newMatches = counts.get('matched') ?? 0;
+	const newMatches = (counts.get('matched') ?? 0) + (counts.get('generated') ?? 0);
 	const totalMatches = statusRows.reduce((sum, row) => sum + row.count, 0);
 	const docTotal = docCountRows[0]?.count ?? 0;
 
@@ -113,10 +128,19 @@ export const load = async ({ locals }) => {
 			documents: docTotal
 		},
 		documents: docRows,
+		pilot: {
+			joined: Boolean(pilotRows[0]),
+			slot: pilotRows[0]?.slot ?? null,
+			status: pilotRows[0]?.status ?? null,
+			phone: pilotRows[0]?.phone ?? null,
+			slotsOpen: Math.max(0, 15 - (pilotCountRows[0]?.count ?? 0)),
+			promptDismissed: Boolean(profile[0]?.whatsappPromptDismissedAt)
+		},
 		profile: {
 			readiness: readiness(profile[0]),
 			headline: profile[0]?.headline ?? null,
-			location: profile[0]?.location ?? null
+			location: profile[0]?.location ?? null,
+			matchMode: profile[0]?.matchMode ?? 'balanced'
 		}
 	};
 };

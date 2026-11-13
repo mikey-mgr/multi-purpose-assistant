@@ -4,7 +4,12 @@
 	let { data }: { data: PageData } = $props();
 
 	const query = $derived(
-		[data.q ? `q=${encodeURIComponent(data.q)}` : '', data.category ? `category=${encodeURIComponent(data.category)}` : '', data.location ? `location=${encodeURIComponent(data.location)}` : '']
+		[
+			data.q ? `q=${encodeURIComponent(data.q)}` : '',
+			data.category ? `category=${encodeURIComponent(data.category)}` : '',
+			data.location ? `location=${encodeURIComponent(data.location)}` : '',
+			data.fresh ? 'fresh=today' : ''
+		]
 			.filter(Boolean)
 			.join('&')
 	);
@@ -30,15 +35,32 @@
 				{data.total} listings in the workspace. Search by role, company or location.
 			</p>
 		</div>
-		<a
-			href="/dashboard"
-			class="inline-flex h-10 items-center rounded-full border border-line-strong bg-surface px-4 text-sm font-semibold text-ink hover:bg-surface-2"
-		>
-			Back to matches
-		</a>
+		<div class="flex flex-wrap gap-2">
+			<a
+				href={data.fresh ? '/jobs' : '/jobs?fresh=today'}
+				class="inline-flex h-10 items-center rounded-full border px-4 text-sm font-semibold"
+				class:border-brand={data.fresh}
+				class:bg-brand={data.fresh}
+				class:text-on-brand={data.fresh}
+				class:border-line-strong={!data.fresh}
+				class:bg-surface={!data.fresh}
+				class:text-ink={!data.fresh}
+			>
+				{data.fresh ? 'Showing today' : 'Scraped today'}
+			</a>
+			<a
+				href="/dashboard"
+				class="inline-flex h-10 items-center rounded-full border border-line-strong bg-surface px-4 text-sm font-semibold text-ink hover:bg-surface-2"
+			>
+				Back to matches
+			</a>
+		</div>
 	</div>
 
 	<form method="GET" class="mt-6 grid gap-3 rounded-2xl border border-line bg-surface p-4 sm:grid-cols-[1fr_180px_180px_auto]">
+		{#if data.fresh}
+			<input type="hidden" name="fresh" value="today" />
+		{/if}
 		<label class="block text-xs font-semibold uppercase tracking-wider text-ink-muted">
 			Search
 			<input
@@ -108,7 +130,7 @@
 					<p class="mt-3 line-clamp-2 text-sm leading-relaxed text-ink-muted">{job.summary}</p>
 					<div class="mt-4 flex flex-wrap items-center justify-between gap-3">
 						<p class="text-xs text-ink-muted">
-							{job.category ?? 'General'}{job.datePosted ? ` - posted ${job.datePosted}` : ''}
+							{job.category ?? 'General'}{job.datePosted ? ` - posted ${job.datePosted}` : ''}{job.addedAt ? ` - added ${new Date(job.addedAt).toLocaleDateString()}` : ''}
 						</p>
 						<a href={`/jobs/${job.id}`} class="text-sm font-semibold text-link">
 							View role

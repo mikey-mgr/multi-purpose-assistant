@@ -1,4 +1,4 @@
-﻿<script lang="ts">
+<script lang="ts">
 	import Icon from '../lib/components/Icon.svelte';
 	import MatchSpotlight from '../lib/components/MatchSpotlight.svelte';
 	import { demoJobs } from '../lib/data/demo';
@@ -137,7 +137,7 @@
 				'@type': 'Organization',
 				name: 'Mukana',
 				url: 'https://mukana.mikeyverse.co.zw',
-				logo: 'https://mukana.mikeyverse.co.zw/icon.svg'
+				logo: 'https://mukana.mikeyverse.co.zw/icon-512.png'
 			},
 			{
 				'@type': 'WebSite',
