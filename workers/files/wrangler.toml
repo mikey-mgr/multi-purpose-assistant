@@ -1,0 +1,13 @@
+name = "mukana-files"
+main = "src/index.ts"
+compatibility_date = "2026-10-29"
+workers_dev = false
+preview_urls = false
+
+routes = [
+	{ pattern = "files.mikeyverse.co.zw", custom_domain = true }
+]
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "mukana-files"

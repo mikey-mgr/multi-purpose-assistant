@@ -14,12 +14,12 @@ _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from core.database import get_existing_job_urls
 from scrapers.utils import SiteScrapeError
 from scrapers.vacancymail_scraper import VacancyMailScraper
 from scrapers.iharare_scraper import IHarareJobsScraper
 from scrapers.vacancybox_scraper import VacancyBoxScraper
 from scrapers.applynow_scraper import ApplyNowScraper
+from scrapers.international_scraper import AshbyScraper, GreenhouseScraper
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,8 @@ class UnifiedJobScraper:
             'iharare': IHarareJobsScraper(),
             'vacancybox': VacancyBoxScraper(),
             'applynow': ApplyNowScraper(),
+            'greenhouse': GreenhouseScraper(),
+            'ashby': AshbyScraper(),
         }
 
     def scrape_jobs(self, site_name: Union[str, List[str]] = None, results_wanted: int = 50,
@@ -71,7 +73,11 @@ class UnifiedJobScraper:
         else:
             per_site_pages = {s: int(raw_pages) for s in site_name}
 
-        existing_urls = get_existing_job_urls()
+        existing_urls = kwargs.pop("existing_urls", None)
+        if existing_urls is None:
+            from core.database import get_existing_job_urls
+
+            existing_urls = get_existing_job_urls()
         logger.info("Loaded %d existing job URLs to skip", len(existing_urls))
 
         all_jobs = []

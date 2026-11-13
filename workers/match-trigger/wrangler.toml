@@ -1,0 +1,9 @@
+name = "mukana-match-trigger"
+main = "src/index.ts"
+compatibility_date = "2026-10-29"
+workers_dev = false
+preview_urls = false
+
+routes = [
+	{ pattern = "trigger.mikeyverse.co.zw", custom_domain = true }
+]

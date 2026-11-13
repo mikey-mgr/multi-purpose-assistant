@@ -1,0 +1,9 @@
+﻿name = "mukana-scheduler"
+main = "src/index.ts"
+compatibility_date = "2026-10-29"
+workers_dev = false
+
+# Cron times are UTC. Scrape windows 05/08/11/14/17 UTC are
+# 07:00, 10:00, 13:00, 16:00 and 19:00 Africa/Harare (UTC+2).
+[triggers]
+crons = ["*/5 * * * *", "0 5,8,11,14,17 * * *"]
