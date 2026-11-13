@@ -2,8 +2,12 @@
 	"$schema": "./node_modules/wrangler/config-schema.json",
 	"name": "web",
 	"compatibility_date": "2026-10-27",
-	"compatibility_flags": [
-		"nodejs_als"
-	],
-	"pages_build_output_dir": ".svelte-kit/cloudflare"
+	"compatibility_flags": ["nodejs_als"],
+	"pages_build_output_dir": ".svelte-kit/cloudflare",
+	"r2_buckets": [
+		{
+			"binding": "FILES",
+			"bucket_name": "mukana-files"
+		}
+	]
 }

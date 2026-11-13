@@ -15,6 +15,23 @@ export function rateLimitKey(event: RequestEvent, scope: string): string {
 	return `${scope}:${identity}`;
 }
 
+/** Windows older than this are irrelevant to every limit we enforce. */
+const RETENTION_MS = 24 * 60 * 60 * 1000;
+/** Prune at most once per hour per isolate rather than on every request. */
+let lastPrunedAt = 0;
+
+async function pruneExpired(db: Awaited<ReturnType<typeof getDb>>, now: number) {
+	if (now - lastPrunedAt < 60 * 60 * 1000) return;
+	lastPrunedAt = now;
+	try {
+		await db.execute(
+			sql`delete from api_rate_limits where window_start < ${new Date(now - RETENTION_MS)}`
+		);
+	} catch {
+		// Pruning is housekeeping; never fail a request because of it.
+	}
+}
+
 export async function rateLimit(
 	key: string,
 	limit: number,
@@ -24,6 +41,8 @@ export async function rateLimit(
 	const windowMs = windowSeconds * 1000;
 	const windowStart = new Date(Math.floor(now / windowMs) * windowMs);
 	const db = await getDb();
+
+	await pruneExpired(db, now);
 
 	await db
 		.insert(apiRateLimits)

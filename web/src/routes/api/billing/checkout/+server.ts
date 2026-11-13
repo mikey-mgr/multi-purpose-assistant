@@ -10,7 +10,8 @@ import {
 } from '../../../../lib/server/pricing';
 import {
 	initiatePaynowPayment,
-	newPaymentReference
+	newPaymentReference,
+	paynowAuthEmail
 } from '../../../../lib/server/paynow';
 import { rateLimit, rateLimitKey, tooManyRequests } from '../../../../lib/server/rate-limit';
 
@@ -73,7 +74,7 @@ export const POST: RequestHandler = async (event) => {
 			reference,
 			amountCents,
 			additionalInfo: `Mukana ${parsed.data.plan.toUpperCase()} subscription`,
-			email: event.locals.user.email
+			email: paynowAuthEmail(event.locals.user.email)
 		});
 	} catch {
 		await db

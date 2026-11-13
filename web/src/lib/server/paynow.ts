@@ -14,12 +14,17 @@ export type PaynowInitResult = {
 };
 
 export function isPaynowMock(): boolean {
-	return envValue('PAYNOW_MODE') !== 'live';
+	const mode = envValue('PAYNOW_MODE') ?? 'mock';
+	return mode === 'mock';
 }
 
 export function paynowConfigured(): boolean {
 	if (isPaynowMock()) return Boolean(envValue('PAYNOW_INTEGRATION_KEY'));
 	return Boolean(envValue('PAYNOW_INTEGRATION_ID') && envValue('PAYNOW_INTEGRATION_KEY'));
+}
+
+export function paynowAuthEmail(customerEmail: string): string {
+	return envValue('PAYNOW_AUTH_EMAIL') || customerEmail;
 }
 
 function integrationKey(): string {
